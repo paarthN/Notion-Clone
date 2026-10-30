@@ -25,6 +25,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { MembersButton } from "@/components/workspace/members-button";
+import { PageActions } from "@/components/workspace/page-topbar";
 import { cn } from "@/lib/utils";
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
@@ -147,26 +148,15 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             {documentId ? <Breadcrumbs documentId={documentId} pages={pages} /> : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {documentId
-              ? uniqueViewers(viewers ?? []).map((viewer) => (
-                  <span
-                    key={viewer.userId}
-                    title={viewer.name}
-                    aria-label={viewer.name}
-                    className="inline-flex size-6 items-center justify-center overflow-hidden rounded-full bg-muted text-[12px] font-medium text-foreground"
-                  >
-                    {viewer.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={viewer.imageUrl} alt="" className="size-full object-cover" />
-                    ) : (
-                      nameInitial(viewer.name)
-                    )}
-                  </span>
-                ))
-              : null}
-            <MembersButton />
-            <ThemeToggle />
-            <UserButton />
+            {documentId ? (
+              <PageActions documentId={documentId} pages={pages} viewers={viewers} />
+            ) : (
+              <>
+                <MembersButton />
+                <ThemeToggle />
+                <UserButton />
+              </>
+            )}
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
@@ -174,22 +164,4 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       <SearchCommand />
     </div>
   );
-}
-
-function uniqueViewers(
-  viewers: Array<{ userId: string; name: string; imageUrl: string | null }>,
-) {
-  const seen = new Set<string>();
-  const unique = [];
-  for (const viewer of viewers) {
-    if (seen.has(viewer.userId)) continue;
-    seen.add(viewer.userId);
-    unique.push(viewer);
-  }
-  return unique;
-}
-
-function nameInitial(name: string) {
-  const first = Array.from(name.trim())[0];
-  return first ? first.toLocaleUpperCase() : "?";
 }

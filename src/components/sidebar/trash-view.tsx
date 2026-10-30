@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -39,7 +40,7 @@ export function TrashView() {
           <DialogHeader>
             <DialogTitle>Trash</DialogTitle>
             <DialogDescription>
-              Restore documents you removed. Trashed items are kept, never permanently deleted.
+              Restore a page, or delete it forever along with anything inside it.
             </DialogDescription>
           </DialogHeader>
           <TrashList onRestored={() => setOpen(false)} />
@@ -53,7 +54,10 @@ function TrashList({ onRestored }: { onRestored: () => void }) {
   const router = useRouter();
   const trashed = useQuery(api.documents.listTrash) as PageDoc[] | undefined;
   const restore = useMutation(api.documents.restore);
+  const remove = useMutation(api.documents.remove);
   const [filter, setFilter] = useState("");
+  const [pending, setPending] = useState<PageDoc | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filtered = useMemo(() => {
     if (!trashed) return [];
@@ -103,6 +107,14 @@ function TrashList({ onRestored }: { onRestored: () => void }) {
                 <Button
                   variant="ghost"
                   size="xs"
+                  className="text-destructive"
+                  onClick={() => setPending(page)}
+                >
+                  Delete forever
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={async () => {
                     try {
                       await restore({ id: page._id });
@@ -124,6 +136,41 @@ function TrashList({ onRestored }: { onRestored: () => void }) {
           </ul>
         )}
       </ScrollArea>
+
+      <Dialog open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete forever?</DialogTitle>
+            <DialogDescription>
+              {pending?.title || "Untitled"} and anything inside it will be permanently deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPending(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleting || !pending}
+              onClick={async () => {
+                if (!pending) return;
+                setDeleting(true);
+                try {
+                  await remove({ id: pending._id });
+                  toast.success("Deleted");
+                  setPending(null);
+                } catch {
+                  toast.error("Couldn't delete");
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              Delete forever
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
   FileText,
   Folder,
   FolderOpen,
@@ -14,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { PageDoc } from "@/lib/documents/tree";
+import { isPageWithin, type DropTarget, type PageDoc } from "@/lib/documents/tree";
 import { api } from "../../../convex/_generated/api";
 
 export function DocumentItem({
@@ -35,11 +36,23 @@ export function DocumentItem({
   pages,
   depth = 0,
   onNavigate,
+  dragId,
+  drop,
+  onRowDragStart,
+  onRowDragEnd,
+  onRowDragOver,
+  onRowDrop,
 }: {
   document: PageDoc;
   pages: PageDoc[];
   depth?: number;
   onNavigate?: () => void;
+  dragId: string | null;
+  drop: DropTarget | null;
+  onRowDragStart: (id: string) => void;
+  onRowDragEnd: () => void;
+  onRowDragOver: (target: DropTarget | null) => void;
+  onRowDrop: (rowId: string) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -55,10 +68,41 @@ export function DocumentItem({
   const create = useMutation(api.documents.create);
   const rename = useMutation(api.documents.rename);
   const archive = useMutation(api.documents.archive);
+  const duplicate = useMutation(api.documents.duplicate);
   const toggleFavorite = useMutation(api.documents.toggleFavorite);
+  const skipClick = useRef(false);
+
+  useEffect(() => {
+    if (drop?.id !== document._id || drop.placement !== "inside" || expanded) {
+      return;
+    }
+    const timer = window.setTimeout(() => setExpanded(true), 450);
+    return () => window.clearTimeout(timer);
+  }, [drop, document._id, expanded]);
 
   const children = pages.filter((page) => page.parentId === document._id);
   const indentPadding = depth * 12 + 12;
+  const showBefore = drop?.id === document._id && drop.placement === "before";
+  const showAfter = drop?.id === document._id && drop.placement === "after";
+  const showInside = drop?.id === document._id && drop.placement === "inside";
+
+  const resolveDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!dragId || dragId === document._id) {
+      onRowDragOver(null);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = rect.height === 0 ? 0.5 : (event.clientY - rect.top) / rect.height;
+    const placement = ratio < 0.28 ? "before" : ratio > 0.72 ? "after" : "inside";
+    const parentId = placement === "inside" ? document._id : document.parentId;
+    if (parentId && isPageWithin(pages, dragId, parentId)) {
+      onRowDragOver(null);
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    onRowDragOver({ id: document._id, placement });
+  };
 
   const onSelect = useCallback(() => {
     if (isFolder) {
@@ -121,6 +165,17 @@ export function DocumentItem({
     }
   }, [archive, document._id, isActive, router]);
 
+  const onDuplicate = useCallback(async () => {
+    try {
+      const copyId = await duplicate({ id: document._id });
+      toast.success("Duplicated");
+      onNavigate?.();
+      router.push(`/app/p/${copyId}`);
+    } catch {
+      toast.error("Couldn't duplicate");
+    }
+  }, [duplicate, document._id, onNavigate, router]);
+
   const onToggleFavorite = useCallback(async () => {
     try {
       await toggleFavorite({ id: document._id });
@@ -134,8 +189,20 @@ export function DocumentItem({
       <div
         role="button"
         tabIndex={0}
+        draggable={!isRenaming}
         aria-expanded={isFolder ? expanded : undefined}
-        onClick={isRenaming ? undefined : onSelect}
+        data-document-id={document._id}
+        onClick={
+          isRenaming
+            ? undefined
+            : () => {
+                if (skipClick.current) {
+                  skipClick.current = false;
+                  return;
+                }
+                onSelect();
+              }
+        }
         onKeyDown={(event) => {
           if (isRenaming) return;
           if (event.key === "Enter" || event.key === " ") {
@@ -143,12 +210,34 @@ export function DocumentItem({
             onSelect();
           }
         }}
+        onDragStart={(event) => {
+          event.stopPropagation();
+          skipClick.current = true;
+          event.dataTransfer.setData("text/plain", document._id);
+          event.dataTransfer.effectAllowed = "move";
+          onRowDragStart(document._id);
+        }}
+        onDragOver={resolveDrop}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onRowDrop(document._id);
+        }}
+        onDragEnd={onRowDragEnd}
         style={{ paddingLeft: indentPadding }}
         className={cn(
           "group/item relative mx-2 flex h-[30px] items-center rounded-[6px] pr-1 text-[14px] leading-[16.8px] font-normal text-foreground hover:bg-sidebar-accent",
           isActive && "bg-sidebar-accent",
+          dragId === document._id && "opacity-40",
+          showInside && "bg-[#efefed] shadow-[inset_2px_0_0_0_var(--foreground)] dark:bg-[#2a2a28]",
         )}
       >
+        {showBefore ? (
+          <span className="pointer-events-none absolute inset-x-1 top-0 z-10 h-0.5 bg-foreground" />
+        ) : null}
+        {showAfter ? (
+          <span className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 bg-foreground" />
+        ) : null}
         <button
           type="button"
           aria-expanded={expanded}
@@ -234,6 +323,10 @@ export function DocumentItem({
                   <Pencil className="size-3.5" />
                   Rename
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void onDuplicate()}>
+                  <Copy className="size-3.5" />
+                  Duplicate
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={() => void onArchive()}>
                   <Trash2 className="size-3.5" />
@@ -274,6 +367,12 @@ export function DocumentItem({
                 pages={pages}
                 depth={depth + 1}
                 onNavigate={onNavigate}
+                dragId={dragId}
+                drop={drop}
+                onRowDragStart={onRowDragStart}
+                onRowDragEnd={onRowDragEnd}
+                onRowDragOver={onRowDragOver}
+                onRowDrop={onRowDrop}
               />
             ))
           )}

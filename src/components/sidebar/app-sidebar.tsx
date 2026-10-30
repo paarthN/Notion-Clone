@@ -2,7 +2,9 @@
 
 import { OrganizationSwitcher } from "@clerk/nextjs";
 import { useMutation } from "convex/react";
-import { PanelLeft, Search, SquarePen, X } from "lucide-react";
+import { X } from "lucide-react";
+
+import { ComposeGlyph, SidebarGlyph } from "@/components/sidebar/sidebar-glyphs";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -45,7 +47,7 @@ export function AppSidebar({
     <nav
       aria-label="Workspace navigation"
       className={cn(
-        "flex h-full min-h-0 w-[270px] shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[inset_-1px_0_0_0_var(--sidebar-border)]",
+        "font-sidebar flex h-full min-h-0 w-[270px] shrink-0 flex-col bg-sidebar text-sidebar-foreground shadow-[inset_-1px_0_0_0_var(--sidebar-border)]",
         className,
       )}
     >
@@ -55,28 +57,30 @@ export function AppSidebar({
             type="button"
             aria-label="Hide sidebar"
             onClick={onCollapse}
-            className="flex size-7 items-center justify-center rounded-md text-[#7d7a75] hover:bg-sidebar-accent dark:text-[#ada9a3]"
+            className="flex size-7 items-center justify-center rounded-md text-[#6f6c67] hover:bg-[rgba(33,27,23,0.05)] dark:text-[#ada9a3] dark:hover:bg-white/6"
           >
-            <PanelLeft className="size-4" />
+            <SidebarGlyph className="size-5" />
           </button>
         ) : (
           <button
             type="button"
             aria-label="Close sidebar"
             onClick={onNavigate}
-            className="flex size-7 items-center justify-center rounded-md text-[#7d7a75] hover:bg-sidebar-accent dark:text-[#ada9a3]"
+            className="flex size-7 items-center justify-center rounded-md text-[#6f6c67] hover:bg-[rgba(33,27,23,0.05)] dark:text-[#ada9a3] dark:hover:bg-white/6"
           >
-            <X className="size-4" />
+            <X className="size-5" strokeWidth={1.5} />
           </button>
         )}
-        <button
-          type="button"
-          aria-label="New page"
-          onClick={() => void onCreatePage()}
-          className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent"
-        >
-          <SquarePen className="size-4" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            aria-label="New page"
+            onClick={() => void onCreatePage()}
+            className="flex size-7 items-center justify-center rounded-md text-[#6f6c67] hover:bg-[rgba(33,27,23,0.05)] dark:text-[#ada9a3] dark:hover:bg-white/6"
+          >
+            <ComposeGlyph className="size-5" />
+          </button>
+        </div>
       </div>
 
       <div className="px-3 pb-1.5">
@@ -86,11 +90,12 @@ export function AppSidebar({
             onNavigate?.();
             openSearch();
           }}
-          className="flex h-8 w-full items-center rounded-lg border border-[rgba(28,19,1,0.11)] bg-transparent px-2 text-[14px] leading-[16.8px] font-normal text-[#a19e99] hover:bg-sidebar-accent dark:border-white/10 dark:text-[#7d7a75]"
+          className="flex h-8 w-full items-center rounded-[8px] border border-[rgba(28,19,1,0.2)] bg-transparent pr-1.5 pl-2 text-[14px] leading-[16.8px] font-normal text-[#a19e99] hover:bg-[rgba(33,27,23,0.05)] dark:border-white/16 dark:text-[#7d7a75] dark:hover:bg-white/6"
         >
-          <Search className="mr-1.5 size-3.5 shrink-0" />
           <span className="flex-1 text-left">Search</span>
-          <kbd className="pointer-events-none hidden text-[12px] font-normal sm:inline">⌘K</kbd>
+          <span className="rounded bg-[#efefed] px-1 py-px text-[11px] leading-[14.3px] font-medium text-[#8e8b86] dark:bg-[#383836] dark:text-[#ada9a3]">
+            ⌘K
+          </span>
         </button>
       </div>
 

@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { FileText, Folder, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { DocumentItem } from "@/components/sidebar/document-item";
@@ -16,12 +16,90 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "../../../convex/_generated/api";
-import type { PageDoc } from "@/lib/documents/tree";
+import type { Id } from "../../../convex/_generated/dataModel";
+import {
+  insertionIndex,
+  isPageWithin,
+  type DropTarget,
+  type PageDoc,
+} from "@/lib/documents/tree";
 
 export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const pages = useQuery(api.documents.list) as PageDoc[] | undefined;
   const create = useMutation(api.documents.create);
+  const move = useMutation(api.documents.move);
+  const dragIdRef = useRef<string | null>(null);
+  const dropRef = useRef<DropTarget | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [drop, setDrop] = useState<DropTarget | null>(null);
+
+  const onRowDragStart = useCallback((id: string) => {
+    dragIdRef.current = id;
+    setDragId(id);
+  }, []);
+
+  const onRowDragEnd = useCallback(() => {
+    dragIdRef.current = null;
+    dropRef.current = null;
+    setDragId(null);
+    setDrop(null);
+  }, []);
+
+  const onRowDragOver = useCallback((target: DropTarget | null) => {
+    dropRef.current = target;
+    setDrop((prev) => {
+      if (prev?.id === target?.id && prev?.placement === target?.placement) {
+        return prev;
+      }
+      return target;
+    });
+  }, []);
+
+  const onRowDrop = useCallback(
+    async (rowId: string) => {
+      const movingId = dragIdRef.current;
+      const target = dropRef.current;
+      dragIdRef.current = null;
+      dropRef.current = null;
+      setDragId(null);
+      setDrop(null);
+      if (!movingId || !target || target.id !== rowId || !pages) {
+        return;
+      }
+      const targetPage = pages.find((page) => page._id === target.id);
+      if (!targetPage || movingId === targetPage._id) {
+        return;
+      }
+      const parentId =
+        target.placement === "inside" ? targetPage._id : targetPage.parentId;
+      if (parentId && isPageWithin(pages, movingId, parentId)) {
+        return;
+      }
+      const index =
+        target.placement === "inside"
+          ? pages.filter(
+              (page) => page.parentId === targetPage._id && page._id !== movingId,
+            ).length
+          : insertionIndex(
+              pages,
+              parentId,
+              movingId,
+              targetPage._id,
+              target.placement,
+            );
+      try {
+        await move({
+          id: movingId as Id<"documents">,
+          parentId,
+          index,
+        });
+      } catch {
+        toast.error("Couldn't move page");
+      }
+    },
+    [move, pages],
+  );
 
   const onCreate = useCallback(
     async (kind: "page" | "folder") => {
@@ -95,6 +173,12 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
               pages={pages}
               depth={0}
               onNavigate={onNavigate}
+              dragId={dragId}
+              drop={drop}
+              onRowDragStart={onRowDragStart}
+              onRowDragEnd={onRowDragEnd}
+              onRowDragOver={onRowDragOver}
+              onRowDrop={onRowDrop}
             />
           ))
         )}

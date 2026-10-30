@@ -3,6 +3,7 @@
 import { useBlockNoteSync } from "@convex-dev/prosemirror-sync/blocknote";
 import type { SyncApi } from "@convex-dev/prosemirror-sync";
 import type { BlockNoteEditor } from "@blocknote/core";
+import { en } from "@blocknote/core/locales";
 import { BlockNoteView } from "@blocknote/mantine";
 import { useMutation } from "convex/react";
 import { useTheme } from "next-themes";
@@ -10,12 +11,22 @@ import { useEffect, useRef } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { editorSchema, PageMentionMenu } from "@/components/editor/page-mention";
 
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import "@/components/editor/notion-editor.css";
 
 const EMPTY_DOC = { type: "doc", content: [] };
+
+const dictionary = {
+  ...en,
+  placeholders: {
+    ...en.placeholders,
+    default: "Type '/' for commands",
+    emptyDocument: "Type '/' for commands",
+  },
+};
 
 export function CollaborativeEditor({ documentId }: { documentId: string }) {
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
@@ -31,6 +42,8 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
     documentId,
     {
       editorOptions: {
+        schema: editorSchema,
+        dictionary,
         uploadFile: (file) => uploadFileRef.current(file),
       },
     },
@@ -56,7 +69,11 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
     <BlockNoteView
       editor={sync.editor}
       theme={resolvedTheme === "dark" ? "dark" : "light"}
-    />
+      sideMenu
+      slashMenu
+    >
+      <PageMentionMenu documentId={documentId} />
+    </BlockNoteView>
   );
 }
 

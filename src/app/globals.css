@@ -8,6 +8,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-sidebar: "NotionInter", var(--font-inter), "Inter", -apple-system, system-ui, "Segoe UI Variable Display", "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
   --font-serif: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;

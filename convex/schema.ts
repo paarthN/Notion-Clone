@@ -13,6 +13,7 @@ export default defineSchema({
     createdBy: v.string(),
     updatedAt: v.number(),
     kind: v.optional(v.union(v.literal("page"), v.literal("folder"))),
+    plainText: v.optional(v.string()),
   })
     .index("by_org", ["orgId"])
     .index("by_org_parent", ["orgId", "parentId"])
@@ -22,7 +23,9 @@ export default defineSchema({
     orgId: v.string(),
     userId: v.string(),
     documentId: v.id("documents"),
-  }).index("by_org_user", ["orgId", "userId"]),
+  })
+    .index("by_org_user", ["orgId", "userId"])
+    .index("by_document", ["documentId"]),
 
   presence: defineTable({
     orgId: v.string(),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { FileText } from "lucide-react";
+import { FileText, Folder } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -19,6 +19,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { PageDoc } from "@/lib/documents/tree";
 import { api } from "../../../convex/_generated/api";
 
+type SearchHit = PageDoc & { snippet: string | null };
+
 export function SearchCommand() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -27,7 +29,7 @@ export function SearchCommand() {
   const results = useQuery(
     api.documents.search,
     open && trimmed.length > 0 ? { query: trimmed } : "skip",
-  ) as PageDoc[] | undefined;
+  ) as SearchHit[] | undefined;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -86,13 +88,23 @@ export function SearchCommand() {
                     onOpenChange(false);
                     router.push(`/app/p/${page._id}`);
                   }}
+                  className={page.snippet ? "items-start" : undefined}
                 >
                   {page.icon ? (
                     <span className="text-sm leading-none">{page.icon}</span>
+                  ) : page.kind === "folder" ? (
+                    <Folder className="size-4 shrink-0 text-muted-foreground" />
                   ) : (
                     <FileText className="size-4 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate">{page.title || "Untitled"}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{page.title || "Untitled"}</span>
+                    {page.snippet ? (
+                      <span className="block truncate text-[12px] leading-4 text-muted-foreground">
+                        {page.snippet}
+                      </span>
+                    ) : null}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -42,6 +42,47 @@ export function buildTree(pages: PageDoc[]): PageNode[] {
   return roots;
 }
 
+export type DropPlacement = "before" | "after" | "inside";
+
+export type DropTarget = {
+  id: string;
+  placement: DropPlacement;
+};
+
+export function isPageWithin(pages: PageDoc[], ancestorId: string, nodeId: string) {
+  const byId = new Map(pages.map((page) => [page._id as string, page]));
+  let current = byId.get(nodeId);
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current._id)) {
+      return false;
+    }
+    seen.add(current._id);
+    if (current._id === ancestorId) {
+      return true;
+    }
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  return false;
+}
+
+export function insertionIndex(
+  pages: PageDoc[],
+  parentId: string | null,
+  movingId: string,
+  targetId: string,
+  placement: "before" | "after",
+) {
+  const siblings = pages
+    .filter((page) => (page.parentId ?? null) === parentId && page._id !== movingId)
+    .sort((a, b) => a.position - b.position || (a._id < b._id ? -1 : 1));
+  const targetIndex = siblings.findIndex((page) => page._id === targetId);
+  if (targetIndex < 0) {
+    return siblings.length;
+  }
+  return placement === "before" ? targetIndex : targetIndex + 1;
+}
+
 export function breadcrumbs(pages: PageDoc[], documentId: string) {
   const byId = new Map(pages.map((page) => [page._id, page]));
   const trail: PageDoc[] = [];

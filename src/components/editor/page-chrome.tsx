@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { ImagePlus, Smile, X } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -143,7 +143,7 @@ export function PageChrome({
           </div>
         )}
 
-        <PageTitle id={id} title={page.title} />
+        <PageTitle key={id} id={id} title={page.title} />
         {children}
       </div>
 
@@ -208,72 +208,112 @@ function IconMenu({
   );
 }
 
+const TITLE_SAVE_DELAY_MS = 300;
+
+function titleForField(title: string) {
+  const trimmed = title.trim();
+  return trimmed === "" || trimmed === "Untitled" ? "" : title;
+}
+
 function PageTitle({ id, title }: { id: Id<"documents">; title: string }) {
   const rename = useMutation(api.documents.rename);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
-  const skipCommit = useRef(false);
-  const shown = title.trim() || "Untitled";
+  const renameRef = useRef(rename);
+  renameRef.current = rename;
+  const [draft, setDraft] = useState(() => titleForField(title));
+  const draftRef = useRef(draft);
+  const serverTitle = useRef(title);
+  const timer = useRef<number | null>(null);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
 
-  const startEditing = () => {
-    setDraft(title.trim() ? title : "");
-    setEditing(true);
-  };
+  useEffect(() => {
+    const element = fieldRef.current;
+    if (!element) return;
+    element.style.height = "0px";
+    element.style.height = `${element.scrollHeight}px`;
+  }, [draft]);
 
-  const commit = async () => {
-    if (skipCommit.current) {
-      skipCommit.current = false;
-      setEditing(false);
-      return;
-    }
-    const saved = draft.trim() || "Untitled";
-    setEditing(false);
-    if (saved === shown) {
-      return;
-    }
-    try {
-      await rename({ id, title: saved });
-    } catch {
+  useEffect(() => {
+    if (title === serverTitle.current) return;
+    const previousField = titleForField(serverTitle.current);
+    serverTitle.current = title;
+    if (draftRef.current !== previousField) return;
+    const next = titleForField(title);
+    draftRef.current = next;
+    setDraft(next);
+  }, [title]);
+
+  const writeTitle = (value: string) => {
+    const saved = value.trim() || "Untitled";
+    const current = serverTitle.current.trim() || "Untitled";
+    if (saved === current) return;
+    const previous = serverTitle.current;
+    serverTitle.current = saved;
+    void renameRef.current({ id, title: saved }).catch(() => {
+      if (serverTitle.current === saved) serverTitle.current = previous;
       toast.error("Could not rename the page");
-    }
+    });
   };
 
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        aria-label="Page title"
-        value={draft}
-        placeholder="Untitled"
-        onChange={(event) => setDraft(event.target.value)}
-        onFocus={(event) => event.currentTarget.select()}
-        onBlur={() => void commit()}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            event.currentTarget.blur();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            skipCommit.current = true;
-            setDraft(shown);
-            setEditing(false);
-          }
-        }}
-        className="w-full resize-none bg-transparent px-2 text-[40px] leading-[48px] font-bold break-words text-[#2c2c2b] outline-none placeholder:text-[#a19e99] dark:text-[#f0efed] dark:placeholder:text-[#7d7a75]"
-      />
-    );
-  }
+  const flush = () => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    writeTitle(draftRef.current);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timer.current !== null) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+      }
+      const saved = draftRef.current.trim() || "Untitled";
+      const current = serverTitle.current.trim() || "Untitled";
+      if (saved === current) return;
+      serverTitle.current = saved;
+      void renameRef.current({ id, title: saved }).catch(() => {
+        toast.error("Could not rename the page");
+      });
+    };
+  }, [id]);
 
   return (
-    <h1>
-      <button
-        type="button"
-        onClick={startEditing}
-        className="w-full px-2 text-left text-[40px] leading-[48px] font-bold break-words text-[#2c2c2b] outline-none dark:text-[#f0efed]"
-      >
-        {shown}
-      </button>
-    </h1>
+    <textarea
+      ref={fieldRef}
+      rows={1}
+      aria-label="Page title"
+      value={draft}
+      placeholder="Untitled"
+      onChange={(event) => {
+        const value = event.target.value.replace(/\n/g, "");
+        draftRef.current = value;
+        setDraft(value);
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => {
+          timer.current = null;
+          writeTitle(draftRef.current);
+        }, TITLE_SAVE_DELAY_MS);
+      }}
+      onBlur={flush}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          if (timer.current !== null) {
+            window.clearTimeout(timer.current);
+            timer.current = null;
+          }
+          const next = titleForField(serverTitle.current);
+          draftRef.current = next;
+          setDraft(next);
+          event.currentTarget.blur();
+        }
+      }}
+      className="w-full resize-none overflow-hidden bg-transparent px-2 text-[40px] leading-[48px] font-bold break-words text-[#2c2c2b] outline-none placeholder:text-[#a19e99] dark:text-[#f0efed] dark:placeholder:text-[#7d7a75]"
+    />
   );
 }
 

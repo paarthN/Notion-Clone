@@ -28,7 +28,7 @@ export function Breadcrumbs({
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex min-w-0 items-center gap-0.5 overflow-hidden text-[14px] leading-[16.8px] font-normal text-foreground"
+      className="flex min-w-0 items-center gap-0.5 overflow-hidden text-[14px] leading-[16.8px] font-[450] text-foreground"
     >
       {trail.map((crumb, index) => {
         const isLast = index === trail.length - 1;
