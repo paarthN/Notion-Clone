@@ -5,7 +5,7 @@ import type { SyncApi } from "@convex-dev/prosemirror-sync";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { en } from "@blocknote/core/locales";
 import { BlockNoteView } from "@blocknote/mantine";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef } from "react";
 
@@ -29,6 +29,9 @@ const dictionary = {
 };
 
 export function CollaborativeEditor({ documentId }: { documentId: string }) {
+  const id = documentId as Id<"documents">;
+  const access = useQuery(api.documents.pageAccess, { id });
+  const canEdit = access?.level !== "view";
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
   const storageUrl = useMutation(api.documents.storageUrl);
   const uploadFileRef = useRef<(file: File) => Promise<string>>(async () => {
@@ -50,16 +53,28 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
   );
   const { resolvedTheme } = useTheme();
   const creating = useRef(false);
+  const editor = sync.editor;
 
   useEffect(() => {
-    if (sync.isLoading || sync.editor || !sync.create || creating.current) {
+    if (!editor) return;
+    const focusBody = () => {
+      const first = editor.document[0];
+      if (first) editor.setTextCursorPosition(first, "start");
+      editor.focus();
+    };
+    window.addEventListener("potion:focus-editor", focusBody);
+    return () => window.removeEventListener("potion:focus-editor", focusBody);
+  }, [editor]);
+
+  useEffect(() => {
+    if (!canEdit || sync.isLoading || sync.editor || !sync.create || creating.current) {
       return;
     }
     creating.current = true;
     void sync.create(EMPTY_DOC).catch(() => {
       creating.current = false;
     });
-  }, [sync]);
+  }, [canEdit, sync]);
 
   if (!sync.editor) {
     return <p className="text-sm text-muted-foreground">Opening the page…</p>;
@@ -68,9 +83,13 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
   return (
     <BlockNoteView
       editor={sync.editor}
+      editable={canEdit}
       theme={resolvedTheme === "dark" ? "dark" : "light"}
-      sideMenu
-      slashMenu
+      sideMenu={canEdit}
+      slashMenu={canEdit}
+      formattingToolbar={canEdit}
+      linkToolbar={canEdit}
+      filePanel={canEdit}
     >
       <PageMentionMenu documentId={documentId} />
     </BlockNoteView>

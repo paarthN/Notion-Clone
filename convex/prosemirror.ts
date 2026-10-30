@@ -3,8 +3,7 @@ import { ProsemirrorSync } from "@convex-dev/prosemirror-sync";
 import type { Id } from "./_generated/dataModel";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { requireOrg } from "./lib/org";
+import { requireAccess } from "./lib/access";
 import { plainTextFromSnapshot } from "./lib/plaintext";
 
 export const prosemirrorSync = new ProsemirrorSync(
@@ -21,10 +20,10 @@ export const {
   submitSteps,
 } = prosemirrorSync.syncApi<DataModel>({
   checkRead: async (ctx, id) => {
-    await assertSameOrg(ctx, id);
+    await requireAccess(ctx, id as Id<"documents">, "view");
   },
   checkWrite: async (ctx, id) => {
-    await assertSameOrg(ctx, id);
+    await requireAccess(ctx, id as Id<"documents">, "edit");
   },
   onSnapshot: async (ctx, id, snapshot) => {
     const documentId = id as Id<"documents">;
@@ -38,10 +37,3 @@ export const {
   },
 });
 
-async function assertSameOrg(ctx: QueryCtx | MutationCtx, id: string) {
-  const { orgId } = await requireOrg(ctx);
-  const doc = await ctx.db.get("documents", id as Id<"documents">);
-  if (!doc || doc.orgId !== orgId) {
-    throw new Error("Page not found");
-  }
-}

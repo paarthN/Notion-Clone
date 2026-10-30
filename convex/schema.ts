@@ -14,6 +14,7 @@ export default defineSchema({
     updatedAt: v.number(),
     kind: v.optional(v.union(v.literal("page"), v.literal("folder"))),
     plainText: v.optional(v.string()),
+    generalAccess: v.optional(v.union(v.literal("edit"), v.literal("view"))),
   })
     .index("by_org", ["orgId"])
     .index("by_org_parent", ["orgId", "parentId"])
@@ -34,5 +35,14 @@ export default defineSchema({
     name: v.string(),
     imageUrl: v.union(v.string(), v.null()),
     updatedAt: v.number(),
-  })    .index("by_document", ["documentId"]),
+  }).index("by_document", ["documentId"]),
+
+  access: defineTable({
+    orgId: v.string(),
+    documentId: v.id("documents"),
+    userId: v.string(),
+    level: v.union(v.literal("full"), v.literal("edit"), v.literal("view")),
+  })
+    .index("by_document", ["documentId"])
+    .index("by_document_user", ["documentId", "userId"]),
 });

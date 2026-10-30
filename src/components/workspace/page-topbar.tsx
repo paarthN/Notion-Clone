@@ -1,10 +1,11 @@
 "use client";
 
-import { UserButton, useUser } from "@clerk/nextjs";
+import { UserButton, useOrganization, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
-import { Copy, FolderInput, Link, Lock, MoreHorizontal, Star } from "lucide-react";
+import { Check, ChevronDown, Copy, FolderInput, Link, Lock, MoreHorizontal, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useEffect } from "react";
 import { toast } from "sonner";
 
 import {
@@ -26,6 +27,14 @@ import type { Id } from "../../../convex/_generated/dataModel";
 const ink =
   "text-black hover:bg-accent dark:text-[#f0efed]";
 
+type AccessLevel = "full" | "edit" | "view";
+
+const ROLE_LABEL: Record<AccessLevel, string> = {
+  full: "Full access",
+  edit: "Can edit",
+  view: "Can view",
+};
+
 export function PageActions({
   documentId,
   pages,
@@ -45,9 +54,37 @@ export function PageActions({
   const archive = useMutation(api.documents.archive);
   const duplicate = useMutation(api.documents.duplicate);
   const move = useMutation(api.documents.move);
+  const setAccess = useMutation(api.documents.setAccess);
   const id = documentId as Id<"documents">;
+  const access = useQuery(api.documents.pageAccess, { id });
+  const { memberships } = useOrganization({
+    memberships: { infinite: true },
+  });
+  const canShare = access?.level === "full";
+  const generalAccess = access?.generalAccess ?? "edit";
   const others = (viewers ?? []).filter((viewer) => viewer.userId !== user?.id);
   const destinations = page && pages ? moveDestinations(pages, page) : [];
+
+  useEffect(() => {
+    if (!memberships?.hasNextPage || memberships.isFetching) return;
+    void memberships.fetchNext();
+  }, [memberships]);
+
+  const members = (memberships?.data ?? []).flatMap((membership) => {
+    const person = membership.publicUserData;
+    const userId = person?.userId;
+    if (!person || !userId) return [];
+    const name = [person.firstName, person.lastName].filter(Boolean).join(" ").trim();
+    return [
+      {
+        id: membership.id,
+        userId,
+        name: name || person.identifier || "Member",
+        imageUrl: person.imageUrl,
+        admin: membership.role === "org:admin",
+      },
+    ];
+  });
 
   const copyLink = async () => {
     try {
@@ -99,6 +136,32 @@ export function PageActions({
     }
   };
 
+  const onGeneralAccess = async (level: "edit" | "view") => {
+    if (!canShare || level === generalAccess) return;
+    try {
+      await setAccess({ id, generalAccess: level });
+    } catch (error) {
+      toast.error(accessError(error));
+    }
+  };
+
+  const onMemberAccess = async (userId: string, level: AccessLevel) => {
+    if (!canShare) return;
+    try {
+      await setAccess({ id, userId, level });
+    } catch (error) {
+      toast.error(accessError(error));
+    }
+  };
+
+  const levelFor = (member: { userId: string; admin: boolean }): AccessLevel => {
+    if (member.admin) return "full";
+    const grant = access?.grants.find((row) => row.userId === member.userId);
+    if (grant) return grant.level;
+    if (page?.createdBy === member.userId) return "full";
+    return generalAccess;
+  };
+
   return (
     <div className="flex shrink-0 items-center gap-0.5">
       {others.map((viewer) => (
@@ -131,10 +194,66 @@ export function PageActions({
           <Lock className="size-4" strokeWidth={1.75} />
           Share
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-64 gap-2 p-3">
-          <p className="text-[14px] leading-5 text-foreground">
-            People in this workspace can open this page.
-          </p>
+        <PopoverContent align="end" className="w-80 gap-3 p-3">
+          <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+            {!memberships || memberships.isLoading ? (
+              <p className="px-1.5 py-1 text-[14px] text-muted-foreground">Loading members…</p>
+            ) : members.length === 0 ? (
+              <p className="px-1.5 py-1 text-[14px] text-muted-foreground">No members yet.</p>
+            ) : (
+              members.map((member) => {
+                const level = levelFor(member);
+                return (
+                  <div key={member.id} className="flex items-center gap-2 px-1 py-1">
+                    <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-[12px] font-medium">
+                      {member.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={member.imageUrl} alt="" className="size-full object-cover" />
+                      ) : (
+                        member.name.slice(0, 1).toLocaleUpperCase() || "?"
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[14px] text-foreground">
+                      {member.name}
+                    </span>
+                    {canShare ? (
+                      <RoleMenu
+                        value={level}
+                        options={["full", "edit", "view"]}
+                        locked={member.admin}
+                        onChange={(next) => void onMemberAccess(member.userId, next)}
+                      />
+                    ) : (
+                      <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
+                        {ROLE_LABEL[level]}
+                      </span>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="flex items-center gap-2 border-t border-border pt-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] text-foreground">Workspace</p>
+              <p className="text-[12px] leading-4 text-muted-foreground">
+                Everyone in this workspace
+              </p>
+            </div>
+            {canShare ? (
+              <RoleMenu
+                value={generalAccess}
+                options={["edit", "view"]}
+                onChange={(next) => {
+                  if (next === "edit" || next === "view") void onGeneralAccess(next);
+                }}
+              />
+            ) : (
+              <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
+                {ROLE_LABEL[generalAccess]}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => void copyLink()}
@@ -173,34 +292,38 @@ export function PageActions({
             <Link className="size-3.5" />
             Copy link
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void onDuplicate()}>
-            <Copy className="size-3.5" />
-            Duplicate
-          </DropdownMenuItem>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <FolderInput className="size-3.5" />
-              Move to
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-72 min-w-52">
-              <DropdownMenuItem onClick={() => void onMove(null)}>
-                Top level
+          {canShare ? (
+            <>
+              <DropdownMenuItem onClick={() => void onDuplicate()}>
+                <Copy className="size-3.5" />
+                Duplicate
               </DropdownMenuItem>
-              {destinations.length > 0 ? <DropdownMenuSeparator /> : null}
-              {destinations.map((item) => (
-                <DropdownMenuItem key={item._id} onClick={() => void onMove(item._id)}>
-                  <span className="max-w-52 truncate">
-                    {item.icon ? `${item.icon} ` : ""}
-                    {item.title || "Untitled"}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => void onTrash()}>
-            Move to trash
-          </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <FolderInput className="size-3.5" />
+                  Move to
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="max-h-72 min-w-52">
+                  <DropdownMenuItem onClick={() => void onMove(null)}>
+                    Top level
+                  </DropdownMenuItem>
+                  {destinations.length > 0 ? <DropdownMenuSeparator /> : null}
+                  {destinations.map((item) => (
+                    <DropdownMenuItem key={item._id} onClick={() => void onMove(item._id)}>
+                      <span className="max-w-52 truncate">
+                        {item.icon ? `${item.icon} ` : ""}
+                        {item.title || "Untitled"}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => void onTrash()}>
+                Move to trash
+              </DropdownMenuItem>
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
@@ -242,4 +365,47 @@ function editedLabel(updatedAt: number) {
   const days = Math.round(hours / 24);
   if (days === 1) return "Edited yesterday";
   return `Edited ${days}d ago`;
+}
+
+function accessError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("full access")) {
+    return "The last person with full access can't be removed";
+  }
+  return "Couldn't update access";
+}
+
+function RoleMenu({
+  value,
+  options,
+  locked = false,
+  onChange,
+}: {
+  value: AccessLevel;
+  options: AccessLevel[];
+  locked?: boolean;
+  onChange: (level: AccessLevel) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[13px] text-foreground hover:bg-accent">
+        {ROLE_LABEL[value]}
+        <ChevronDown className="size-3" strokeWidth={2} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-36">
+        {options.map((option) => (
+          <DropdownMenuItem
+            key={option}
+            disabled={locked && option !== "full"}
+            onClick={() => {
+              if (option !== value) onChange(option);
+            }}
+          >
+            <span className="flex-1">{ROLE_LABEL[option]}</span>
+            {option === value ? <Check className="size-3.5" /> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }

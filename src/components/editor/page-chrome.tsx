@@ -27,6 +27,8 @@ export function PageChrome({
 }) {
   const pages = useQuery(api.documents.list) as PageDoc[] | undefined;
   const id = documentId as Id<"documents">;
+  const access = useQuery(api.documents.pageAccess, { id });
+  const canEdit = access?.level !== "view";
   const page = pages?.find((item) => item._id === id);
   const setIcon = useMutation(api.documents.setIcon);
   const setCover = useMutation(api.documents.setCover);
@@ -54,37 +56,42 @@ export function PageChrome({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={page.coverUrl} alt="Page cover" className="h-full w-full object-cover" />
           <div className="absolute right-5 bottom-5 flex items-center gap-x-2 opacity-0 group-hover:opacity-100">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs text-muted-foreground"
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImagePlus className="mr-2 h-4 w-4" />
-              Change cover
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs text-muted-foreground"
-              onClick={() => {
-                void setCover({ id, storageId: null }).catch(() => {
-                  toast.error("Could not remove the cover");
-                });
-              }}
-            >
-              <X className="mr-2 h-4 w-4" />
-              Remove
-            </Button>
+            {canEdit ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs text-muted-foreground"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                  Change cover
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs text-muted-foreground"
+                  onClick={() => {
+                    void setCover({ id, storageId: null }).catch(() => {
+                      toast.error("Could not remove the cover");
+                    });
+                  }}
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Remove
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
 
       <div className="mx-auto w-full max-w-[720px]">
-        {page.coverUrl ? null : (
+        {(page.coverUrl || (!canEdit && !page.icon)) ? null : (
           <div className="group/top relative h-[112px]">
             {page.icon ? (
+              canEdit ? (
               <Popover open={iconOpen} onOpenChange={setIconOpen}>
                 <PopoverTrigger
                   className="absolute bottom-1 left-2 text-[40px] leading-none"
@@ -109,7 +116,13 @@ export function PageChrome({
                   }}
                 />
               </Popover>
+              ) : (
+                <span className="absolute bottom-1 left-2 text-[40px] leading-none">
+                  {page.icon}
+                </span>
+              )
             ) : null}
+            {canEdit ? (
             <div className="absolute bottom-2 left-2 flex items-center gap-1 opacity-0 group-hover/top:opacity-100">
               {!page.icon ? (
                 <Popover open={iconOpen} onOpenChange={setIconOpen}>
@@ -140,10 +153,15 @@ export function PageChrome({
                 {uploading ? "Uploading…" : "Add cover"}
               </button>
             </div>
+            ) : null}
           </div>
         )}
 
-        <PageTitle key={id} id={id} title={page.title} />
+        {canEdit ? (
+          <PageTitle key={id} id={id} title={page.title} />
+        ) : (
+          <PageTitleText title={page.title} />
+        )}
         {children}
       </div>
 
@@ -205,6 +223,25 @@ function IconMenu({
         ))}
       </div>
     </PopoverContent>
+  );
+}
+
+const TITLE_CLASS =
+  "w-full px-2 text-[40px] leading-[48px] font-bold break-words text-[#2c2c2b] dark:text-[#f0efed]";
+
+function PageTitleText({ title }: { title: string }) {
+  const empty = title.trim() === "" || title.trim() === "Untitled";
+  return (
+    <div
+      aria-label="Page title"
+      className={
+        empty
+          ? "w-full px-2 text-[40px] leading-[48px] font-bold break-words text-[#a19e99] dark:text-[#7d7a75]"
+          : TITLE_CLASS
+      }
+    >
+      {empty ? "Untitled" : title}
+    </div>
   );
 }
 
@@ -299,7 +336,8 @@ function PageTitle({ id, title }: { id: Id<"documents">; title: string }) {
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          event.currentTarget.blur();
+          flush();
+          window.dispatchEvent(new Event("potion:focus-editor"));
         } else if (event.key === "Escape") {
           event.preventDefault();
           if (timer.current !== null) {
@@ -312,7 +350,7 @@ function PageTitle({ id, title }: { id: Id<"documents">; title: string }) {
           event.currentTarget.blur();
         }
       }}
-      className="w-full resize-none overflow-hidden bg-transparent px-2 text-[40px] leading-[48px] font-bold break-words text-[#2c2c2b] outline-none placeholder:text-[#a19e99] dark:text-[#f0efed] dark:placeholder:text-[#7d7a75]"
+      className={`${TITLE_CLASS} resize-none overflow-hidden bg-transparent outline-none placeholder:text-[#a19e99] dark:placeholder:text-[#7d7a75]`}
     />
   );
 }

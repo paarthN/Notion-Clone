@@ -9,6 +9,7 @@
  */
 
 import type * as documents from "../documents.js";
+import type * as lib_access from "../lib/access.js";
 import type * as lib_org from "../lib/org.js";
 import type * as lib_plaintext from "../lib/plaintext.js";
 import type * as prosemirror from "../prosemirror.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   documents: typeof documents;
+  "lib/access": typeof lib_access;
   "lib/org": typeof lib_org;
   "lib/plaintext": typeof lib_plaintext;
   prosemirror: typeof prosemirror;

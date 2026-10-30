@@ -1,10 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Component, useEffect, useState, type ReactNode } from "react";
-import { toast } from "sonner";
+import { Component, useEffect, type ReactNode } from "react";
 
 import { CollaborativeEditor } from "@/components/editor/collaborative-editor";
 import { PageChrome } from "@/components/editor/page-chrome";
@@ -63,26 +61,11 @@ export function DocumentScreen({ documentId }: { documentId: string }) {
 
 function Subpages({ parentId, pages }: { parentId: Id<"documents">; pages: PageDoc[] }) {
   const router = useRouter();
-  const create = useMutation(api.documents.create);
-  const [creating, setCreating] = useState(false);
   const children = pages
     .filter((page) => page.parentId === parentId)
     .sort((a, b) => a.position - b.position || a.title.localeCompare(b.title));
 
-  const onCreate = async () => {
-    setCreating(true);
-    try {
-      const childId = await create({
-        parentId,
-        title: "Untitled",
-        kind: "page",
-      });
-      router.push(`/app/p/${childId}`);
-    } catch {
-      toast.error("Couldn't create page");
-      setCreating(false);
-    }
-  };
+  if (children.length === 0) return null;
 
   return (
     <div className="mt-3 px-1 pb-8">
@@ -99,15 +82,6 @@ function Subpages({ parentId, pages }: { parentId: Id<"documents">; pages: PageD
           <span className="truncate">{child.title || "Untitled"}</span>
         </button>
       ))}
-      <button
-        type="button"
-        aria-label="Add a page inside"
-        disabled={creating}
-        onClick={() => void onCreate()}
-        className="flex h-[30px] w-[30px] items-center justify-center rounded-[6px] text-[#a19e99] hover:bg-[rgba(33,27,23,0.05)] disabled:opacity-50 dark:text-[#7d7a75] dark:hover:bg-white/6"
-      >
-        <Plus className="size-4" />
-      </button>
     </div>
   );
 }

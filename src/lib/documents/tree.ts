@@ -10,6 +10,8 @@ export type PageDoc = {
   isArchived: boolean;
   updatedAt: number;
   kind: "page" | "folder";
+  createdBy: string;
+  generalAccess?: "edit" | "view";
 };
 
 export type PageNode = PageDoc & { children: PageNode[] };
@@ -81,17 +83,4 @@ export function insertionIndex(
     return siblings.length;
   }
   return placement === "before" ? targetIndex : targetIndex + 1;
-}
-
-export function breadcrumbs(pages: PageDoc[], documentId: string) {
-  const byId = new Map(pages.map((page) => [page._id, page]));
-  const trail: PageDoc[] = [];
-  let current = byId.get(documentId as PageDoc["_id"]);
-  const seen = new Set<string>();
-  while (current && !seen.has(current._id)) {
-    seen.add(current._id);
-    trail.unshift(current);
-    current = current.parentId ? byId.get(current.parentId) : undefined;
-  }
-  return trail;
 }

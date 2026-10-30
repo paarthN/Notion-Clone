@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
+import { assertFullHolderRemains, requireAccess } from "./lib/access";
 import { requireOrg } from "./lib/org";
 import { prosemirrorSync } from "./prosemirror";
 
@@ -105,11 +106,13 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const { orgId, userId } = await requireOrg(ctx);
     const kind = args.kind ?? "page";
+    let generalAccess: "edit" | "view" | undefined;
     if (args.parentId) {
-      const parent = await ctx.db.get("documents", args.parentId);
-      if (!parent || parent.orgId !== orgId || parent.isArchived) {
+      const parent = await requireAccess(ctx, args.parentId, "edit");
+      if (parent.doc.isArchived) {
         throw new Error("Parent page not found");
       }
+      generalAccess = parent.doc.generalAccess;
     }
 
     const siblings = await ctx.db
@@ -133,6 +136,14 @@ export const create = mutation({
       updatedAt: Date.now(),
       kind,
       plainText: "",
+      ...(generalAccess ? { generalAccess } : {}),
+    });
+
+    await ctx.db.insert("access", {
+      orgId,
+      documentId: id,
+      userId,
+      level: "full",
     });
 
     if (kind === "page") {
@@ -145,7 +156,7 @@ export const create = mutation({
 export const rename = mutation({
   args: { id: v.id("documents"), title: v.string() },
   handler: async (ctx, args) => {
-    await requireOwned(ctx, args.id);
+    await requireAccess(ctx, args.id, "edit");
     await ctx.db.patch("documents", args.id, {
       title: args.title.trim() || "Untitled",
       updatedAt: Date.now(),
@@ -156,7 +167,7 @@ export const rename = mutation({
 export const setIcon = mutation({
   args: { id: v.id("documents"), icon: v.union(v.string(), v.null()) },
   handler: async (ctx, args) => {
-    await requireOwned(ctx, args.id);
+    await requireAccess(ctx, args.id, "edit");
     await ctx.db.patch("documents", args.id, {
       icon: args.icon,
       updatedAt: Date.now(),
@@ -190,7 +201,7 @@ export const setCover = mutation({
     storageId: v.union(v.id("_storage"), v.null()),
   },
   handler: async (ctx, args) => {
-    await requireOwned(ctx, args.id);
+    await requireAccess(ctx, args.id, "edit");
     const coverUrl = args.storageId
       ? await ctx.storage.getUrl(args.storageId)
       : null;
@@ -204,7 +215,7 @@ export const setCover = mutation({
 export const archive = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const { orgId } = await requireOwned(ctx, args.id);
+    const { orgId } = await requireAccess(ctx, args.id, "full");
     await setArchived(ctx, orgId, args.id, true);
   },
 });
@@ -212,7 +223,7 @@ export const archive = mutation({
 export const restore = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const { orgId } = await requireOwned(ctx, args.id);
+    const { orgId } = await requireAccess(ctx, args.id, "full");
     await setArchived(ctx, orgId, args.id, false);
   },
 });
@@ -224,7 +235,7 @@ export const move = mutation({
     index: v.number(),
   },
   handler: async (ctx, args) => {
-    const { orgId } = await requireOwned(ctx, args.id);
+    const { orgId } = await requireAccess(ctx, args.id, "full");
     const moving = await ctx.db.get("documents", args.id);
     if (!moving || moving.orgId !== orgId || moving.isArchived) {
       throw new Error("Page not found");
@@ -253,8 +264,9 @@ export const move = mutation({
 export const duplicate = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const { orgId, userId } = await requireOwned(ctx, args.id);
-    const source = await ctx.db.get("documents", args.id);
+    const actor = await requireAccess(ctx, args.id, "full");
+    const { orgId, userId } = actor;
+    const source = actor.doc;
     if (!source || source.orgId !== orgId || source.isArchived) {
       throw new Error("Page not found");
     }
@@ -288,6 +300,14 @@ export const duplicate = mutation({
       updatedAt: Date.now(),
       kind,
       plainText: source.plainText ?? "",
+      ...(source.generalAccess ? { generalAccess: source.generalAccess } : {}),
+    });
+
+    await ctx.db.insert("access", {
+      orgId,
+      documentId: id,
+      userId,
+      level: "full",
     });
 
     if (kind === "page") {
@@ -303,22 +323,18 @@ export const duplicate = mutation({
 export const remove = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const { orgId } = await requireOwned(ctx, args.id);
-    const doc = await ctx.db.get("documents", args.id);
-    if (!doc || doc.orgId !== orgId) {
-      throw new Error("Page not found");
-    }
-    if (!doc.isArchived) {
+    const actor = await requireAccess(ctx, args.id, "full");
+    if (!actor.doc.isArchived) {
       throw new Error("Move the page to trash before deleting it");
     }
-    await deleteDocumentTree(ctx, orgId, args.id);
+    await deleteDocumentTree(ctx, actor.orgId, args.id);
   },
 });
 
 export const toggleFavorite = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
-    const { orgId, userId } = await requireOwned(ctx, args.id);
+    const { orgId, userId } = await requireAccess(ctx, args.id, "view");
     const existing = await ctx.db
       .query("favorites")
       .withIndex("by_org_user", (q) => q.eq("orgId", orgId).eq("userId", userId))
@@ -340,7 +356,7 @@ export const toggleFavorite = mutation({
 export const heartbeat = mutation({
   args: { documentId: v.id("documents") },
   handler: async (ctx, args) => {
-    const actor = await requireOwned(ctx, args.documentId);
+    const actor = await requireAccess(ctx, args.documentId, "view");
     const now = Date.now();
     const rows = await ctx.db
       .query("presence")
@@ -381,7 +397,7 @@ export const heartbeat = mutation({
 export const viewers = query({
   args: { documentId: v.id("documents") },
   handler: async (ctx, args) => {
-    const actor = await requireOwned(ctx, args.documentId);
+    const actor = await requireAccess(ctx, args.documentId, "view");
     const cutoff = Date.now() - PRESENCE_TTL_MS;
     const rows = await ctx.db
       .query("presence")
@@ -404,6 +420,85 @@ export const viewers = query({
         },
       ];
     });
+  },
+});
+
+const accessLevel = v.union(v.literal("full"), v.literal("edit"), v.literal("view"));
+const workspaceAccess = v.union(v.literal("edit"), v.literal("view"));
+
+export const pageAccess = query({
+  args: { id: v.id("documents") },
+  handler: async (ctx, args) => {
+    const actor = await requireAccess(ctx, args.id, "view");
+    const rows = await ctx.db
+      .query("access")
+      .withIndex("by_document", (q) => q.eq("documentId", args.id))
+      .collect();
+    return {
+      level: actor.level,
+      generalAccess: actor.doc.generalAccess ?? "edit",
+      grants: rows
+        .filter((row) => row.orgId === actor.orgId)
+        .map((row) => ({ userId: row.userId, level: row.level })),
+    };
+  },
+});
+
+export const setAccess = mutation({
+  args: {
+    id: v.id("documents"),
+    generalAccess: v.optional(workspaceAccess),
+    userId: v.optional(v.string()),
+    level: v.optional(v.union(accessLevel, v.null())),
+  },
+  handler: async (ctx, args) => {
+    if (args.generalAccess === undefined && args.userId === undefined) {
+      throw new Error("Nothing to update");
+    }
+    const actor = await requireAccess(ctx, args.id, "full");
+    if (args.generalAccess) {
+      await ctx.db.patch("documents", args.id, {
+        generalAccess: args.generalAccess,
+      });
+    }
+    if (args.userId === undefined) {
+      return;
+    }
+    const userId = args.userId.trim();
+    if (!userId) {
+      throw new Error("Missing member");
+    }
+    if (args.level === undefined) {
+      throw new Error("Missing access level");
+    }
+    const existing = await ctx.db
+      .query("access")
+      .withIndex("by_document_user", (q) =>
+        q.eq("documentId", args.id).eq("userId", userId),
+      )
+      .unique();
+    if (existing && existing.orgId !== actor.orgId) {
+      throw new Error("Page not found");
+    }
+    if (args.level === null) {
+      if (existing) {
+        await ctx.db.delete("access", existing._id);
+      }
+    } else if (existing) {
+      await ctx.db.patch("access", existing._id, { level: args.level });
+    } else {
+      await ctx.db.insert("access", {
+        orgId: actor.orgId,
+        documentId: args.id,
+        userId,
+        level: args.level,
+      });
+    }
+    const doc = await ctx.db.get("documents", args.id);
+    if (!doc || doc.orgId !== actor.orgId) {
+      throw new Error("Page not found");
+    }
+    await assertFullHolderRemains(ctx, doc, actor);
   },
 });
 
@@ -436,15 +531,6 @@ function viewerName(name: string, userId: string) {
     return "Member";
   }
   return trimmed;
-}
-
-async function requireOwned(ctx: QueryCtx | MutationCtx, id: Id<"documents">) {
-  const actor = await requireOrg(ctx);
-  const doc = await ctx.db.get("documents", id);
-  if (!doc || doc.orgId !== actor.orgId) {
-    throw new Error("Page not found");
-  }
-  return actor;
 }
 
 async function setArchived(
@@ -595,6 +681,14 @@ async function deleteDocumentTree(
     .collect();
   for (const row of presence) {
     await ctx.db.delete("presence", row._id);
+  }
+
+  const grants = await ctx.db
+    .query("access")
+    .withIndex("by_document", (q) => q.eq("documentId", id))
+    .collect();
+  for (const row of grants) {
+    await ctx.db.delete("access", row._id);
   }
 
   if ((doc.kind ?? "page") === "page") {
