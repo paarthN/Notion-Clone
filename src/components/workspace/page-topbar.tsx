@@ -1,11 +1,11 @@
 "use client";
 
 import { UserButton, useOrganization, useUser } from "@clerk/nextjs";
-import { useMutation, useQuery } from "convex/react";
+import { useConvexConnectionState, useMutation, useQuery } from "convex/react";
 import { Check, ChevronDown, Copy, FolderInput, Link, Lock, MoreHorizontal, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import {
@@ -21,6 +21,8 @@ import {
 import type { PageDoc } from "@/lib/documents/tree";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { readSavePhase, setSavePhase, subscribeSavePhase } from "@/components/editor/save-state";
+import { VersionHistory } from "@/components/workspace/version-history";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -61,6 +63,36 @@ export function PageActions({
     memberships: { infinite: true },
   });
   const canShare = access?.level === "full";
+  const canEdit = access !== undefined && access.level !== "view";
+  const connection = useConvexConnectionState();
+  const savePhase = useSyncExternalStore(
+    subscribeSavePhase,
+    () => readSavePhase(documentId),
+    () => "idle" as const,
+  );
+  const updatedAt = page?.updatedAt;
+  const savedBaseline = useRef(updatedAt);
+  useEffect(() => {
+    if (savePhase === "saved") return;
+    savedBaseline.current = updatedAt;
+  }, [savePhase, updatedAt]);
+  useEffect(() => {
+    if (savePhase !== "saved" || updatedAt === undefined) return;
+    if (savedBaseline.current !== undefined && updatedAt !== savedBaseline.current) {
+      setSavePhase(documentId, "idle");
+    }
+  }, [documentId, savePhase, updatedAt]);
+  const offline = connection.hasEverConnected && !connection.isWebSocketConnected;
+  const saveText =
+    offline || savePhase === "error"
+      ? "Not saved"
+      : savePhase === "saving"
+        ? "Saving…"
+        : savePhase === "saved"
+          ? "Saved"
+          : page
+            ? editedLabel(page.updatedAt)
+            : null;
   const generalAccess = access?.generalAccess ?? "edit";
   const others = (viewers ?? []).filter((viewer) => viewer.userId !== user?.id);
   const destinations = page && pages ? moveDestinations(pages, page) : [];
@@ -179,9 +211,12 @@ export function PageActions({
           )}
         </span>
       ))}
-      {page ? (
-        <span className="hidden px-1.5 text-[14px] leading-none font-[450] text-[#a19e99] sm:inline dark:text-[#7d7a75]">
-          {editedLabel(page.updatedAt)}
+      {saveText ? (
+        <span
+          aria-live="polite"
+          className="hidden px-1.5 text-[14px] leading-none font-[450] text-[#a19e99] sm:inline dark:text-[#7d7a75]"
+        >
+          {saveText}
         </span>
       ) : null}
       <Popover>
@@ -324,6 +359,7 @@ export function PageActions({
               </DropdownMenuItem>
             </>
           ) : null}
+          <VersionHistory documentId={documentId} canEdit={canEdit} />
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}

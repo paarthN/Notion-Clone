@@ -1,5 +1,5 @@
 import { defineApp } from "convex/server";
-import prosemirrorSync from "@convex-dev/prosemirror-sync/convex.config.js";
+import prosemirrorSync from "./components/prosemirrorSync/convex.config.js";
 
 const app = defineApp();
 app.use(prosemirrorSync);

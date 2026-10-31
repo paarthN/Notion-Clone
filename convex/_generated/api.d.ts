@@ -12,6 +12,7 @@ import type * as documents from "../documents.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_org from "../lib/org.js";
 import type * as lib_plaintext from "../lib/plaintext.js";
+import type * as lib_pmSchema from "../lib/pmSchema.js";
 import type * as prosemirror from "../prosemirror.js";
 
 import type {
@@ -25,6 +26,7 @@ declare const fullApi: ApiFromModules<{
   "lib/access": typeof lib_access;
   "lib/org": typeof lib_org;
   "lib/plaintext": typeof lib_plaintext;
+  "lib/pmSchema": typeof lib_pmSchema;
   prosemirror: typeof prosemirror;
 }>;
 
@@ -55,5 +57,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  prosemirrorSync: import("@convex-dev/prosemirror-sync/_generated/component.js").ComponentApi<"prosemirrorSync">;
+  prosemirrorSync: import("../components/prosemirrorSync/_generated/component.js").ComponentApi<"prosemirrorSync">;
 };

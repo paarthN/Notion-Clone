@@ -9,6 +9,8 @@ import { useMutation, useQuery } from "convex/react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef } from "react";
 
+import { setSavePhase, useEditorSaveState } from "@/components/editor/save-state";
+
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { editorSchema, PageMentionMenu } from "@/components/editor/page-mention";
@@ -40,10 +42,14 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
   uploadFileRef.current = (file) =>
     uploadInlineFile(file, generateUploadUrl, storageUrl);
 
+  const reportSyncError = useRef<(error: Error) => void>(() => {
+    setSavePhase(documentId, "error");
+  });
   const sync = useBlockNoteSync<BlockNoteEditor>(
     api.prosemirror as unknown as SyncApi,
     documentId,
     {
+      onSyncError: (error) => reportSyncError.current(error),
       editorOptions: {
         schema: editorSchema,
         dictionary,
@@ -51,6 +57,7 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
       },
     },
   );
+  useEditorSaveState(documentId, sync.editor, reportSyncError);
   const { resolvedTheme } = useTheme();
   const creating = useRef(false);
   const editor = sync.editor;
