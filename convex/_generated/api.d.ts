@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as comments from "../comments.js";
 import type * as documents from "../documents.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_org from "../lib/org.js";
@@ -22,6 +23,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  comments: typeof comments;
   documents: typeof documents;
   "lib/access": typeof lib_access;
   "lib/org": typeof lib_org;

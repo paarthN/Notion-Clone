@@ -3,6 +3,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireOrg, type OrgContext } from "./org";
 
 export type AccessLevel = "full" | "edit" | "view";
+export type ResolvedAccess = AccessLevel | "none";
 
 const RANK: Record<AccessLevel, number> = { view: 0, edit: 1, full: 2 };
 
@@ -12,7 +13,7 @@ export async function resolveLevel(
   ctx: DbCtx,
   doc: Doc<"documents">,
   actor: OrgContext,
-): Promise<AccessLevel> {
+): Promise<ResolvedAccess> {
   if (actor.role === "admin") {
     return "full";
   }
@@ -29,7 +30,11 @@ export async function resolveLevel(
   if (doc.createdBy === actor.userId) {
     return "full";
   }
-  return doc.generalAccess ?? "edit";
+  const general = doc.generalAccess ?? "edit";
+  if (general === "none") {
+    return "none";
+  }
+  return general;
 }
 
 export async function requireAccess(
@@ -43,6 +48,9 @@ export async function requireAccess(
     throw new Error("Page not found");
   }
   const level = await resolveLevel(ctx, doc, actor);
+  if (level === "none") {
+    throw new Error("Page not found");
+  }
   if (RANK[level] < RANK[need]) {
     throw new Error("You don't have access to do that");
   }

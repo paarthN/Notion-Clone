@@ -1,11 +1,11 @@
 "use client";
 
-import { UserButton, useOrganization, useUser } from "@clerk/nextjs";
+import { useClerk, UserButton, useOrganization, useUser } from "@clerk/nextjs";
 import { useConvexConnectionState, useMutation, useQuery } from "convex/react";
 import { Check, ChevronDown, Copy, FolderInput, Link, Lock, MoreHorizontal, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import {
@@ -29,6 +29,114 @@ import type { Id } from "../../../convex/_generated/dataModel";
 const ink =
   "text-black hover:bg-accent dark:text-[#f0efed]";
 
+export function WorkspaceActions() {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5">
+      <WorkspaceShare />
+      <WorkspaceMenu label="Workspace actions" />
+    </div>
+  );
+}
+
+function WorkspaceShare() {
+  const { openOrganizationProfile } = useClerk();
+  const { memberships } = useOrganization({ memberships: { infinite: true } });
+  const members = memberships?.data ?? [];
+
+  useEffect(() => {
+    if (!memberships?.hasNextPage || memberships.isFetching) return;
+    void memberships.fetchNext();
+  }, [memberships]);
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        className={cn(
+          "flex h-7 items-center gap-1 rounded-md px-1.5 text-[14px] leading-none font-[450]",
+          ink,
+        )}
+      >
+        <Lock className="size-4" strokeWidth={1.75} />
+        Share
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 gap-3 p-3">
+        <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+          {!memberships || memberships.isLoading ? (
+            <p className="px-1.5 py-1 text-[14px] text-muted-foreground">Loading members…</p>
+          ) : members.length === 0 ? (
+            <p className="px-1.5 py-1 text-[14px] text-muted-foreground">No members yet.</p>
+          ) : (
+            members.map((membership) => {
+              const user = membership.publicUserData;
+              const name = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.identifier || "Member";
+              return (
+                <div key={membership.id} className="flex items-center gap-2 px-1 py-1">
+                  <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-[12px] font-medium">
+                    {user?.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={user.imageUrl} alt="" className="size-full object-cover" />
+                    ) : (
+                      name.slice(0, 1).toLocaleUpperCase() || "?"
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[14px] text-foreground">{name}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div className="border-t border-border pt-2">
+          <button
+            type="button"
+            className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[14px] text-foreground hover:bg-accent"
+            onClick={() =>
+              openOrganizationProfile({
+                __experimental_startPath: "/organization-members",
+              })
+            }
+          >
+            Invite people
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function WorkspaceMenu({
+  label,
+  children,
+}: {
+  label: string;
+  children?: ReactNode;
+}) {
+  const { resolvedTheme, setTheme } = useTheme();
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={label}
+        className={cn("flex size-7 items-center justify-center rounded-md", ink)}
+      >
+        <MoreHorizontal className="size-4" strokeWidth={1.75} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        {children}
+        {children ? <DropdownMenuSeparator /> : null}
+        <DropdownMenuItem
+          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+        >
+          {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+        </DropdownMenuItem>
+        <div className="flex items-center justify-between px-1.5 py-1">
+          <span className="text-sm">Account</span>
+          <UserButton />
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 type AccessLevel = "full" | "edit" | "view";
 
 const ROLE_LABEL: Record<AccessLevel, string> = {
@@ -48,7 +156,6 @@ export function PageActions({
 }) {
   const router = useRouter();
   const { user } = useUser();
-  const { resolvedTheme, setTheme } = useTheme();
   const page = pages?.find((item) => item._id === documentId);
   const favoriteIds = useQuery(api.documents.favorites) as string[] | undefined;
   const isFavorite = favoriteIds?.includes(documentId) ?? false;
@@ -57,6 +164,7 @@ export function PageActions({
   const duplicate = useMutation(api.documents.duplicate);
   const move = useMutation(api.documents.move);
   const setAccess = useMutation(api.documents.setAccess);
+  const setShareLink = useMutation(api.documents.setShareLink);
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });
   const { memberships } = useOrganization({
@@ -94,6 +202,7 @@ export function PageActions({
             ? editedLabel(page.updatedAt)
             : null;
   const generalAccess = access?.generalAccess ?? "edit";
+  const shareOn = Boolean(access?.shareToken);
   const others = (viewers ?? []).filter((viewer) => viewer.userId !== user?.id);
   const destinations = page && pages ? moveDestinations(pages, page) : [];
 
@@ -120,10 +229,22 @@ export function PageActions({
 
   const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      const url = access?.shareToken
+        ? `${window.location.origin}/s/${access.shareToken}`
+        : `${window.location.origin}/app/p/${documentId}`;
+      await navigator.clipboard.writeText(url);
       toast.success("Link copied");
     } catch {
       toast.error("Couldn't copy link");
+    }
+  };
+
+  const onShareLink = async (enabled: boolean) => {
+    if (!canShare || enabled === shareOn) return;
+    try {
+      await setShareLink({ id, enabled });
+    } catch (error) {
+      toast.error(accessError(error));
     }
   };
 
@@ -186,11 +307,12 @@ export function PageActions({
     }
   };
 
-  const levelFor = (member: { userId: string; admin: boolean }): AccessLevel => {
+  const levelFor = (member: { userId: string; admin: boolean }): AccessLevel | "none" => {
     if (member.admin) return "full";
     const grant = access?.grants.find((row) => row.userId === member.userId);
     if (grant) return grant.level;
     if (page?.createdBy === member.userId) return "full";
+    if (generalAccess === "none") return "none";
     return generalAccess;
   };
 
@@ -260,7 +382,7 @@ export function PageActions({
                       />
                     ) : (
                       <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
-                        {ROLE_LABEL[level]}
+                        {level === "none" ? "No access" : ROLE_LABEL[level]}
                       </span>
                     )}
                   </div>
@@ -275,7 +397,11 @@ export function PageActions({
                 Everyone in this workspace
               </p>
             </div>
-            {canShare ? (
+            {generalAccess === "none" ? (
+              <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
+                No access
+              </span>
+            ) : canShare ? (
               <RoleMenu
                 value={generalAccess}
                 options={["edit", "view"]}
@@ -286,6 +412,26 @@ export function PageActions({
             ) : (
               <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
                 {ROLE_LABEL[generalAccess]}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 border-t border-border pt-2">
+            <p className="min-w-0 flex-1 text-[14px] text-foreground">
+              Anyone with the link can view
+            </p>
+            {canShare ? (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={shareOn}
+                onClick={() => void onShareLink(!shareOn)}
+                className="flex h-7 shrink-0 items-center rounded-md px-1.5 text-[13px] text-foreground hover:bg-accent"
+              >
+                {shareOn ? "On" : "Off"}
+              </button>
+            ) : (
+              <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
+                {shareOn ? "On" : "Off"}
               </span>
             )}
           </div>
@@ -311,67 +457,49 @@ export function PageActions({
       >
         <Star className={cn("size-4", isFavorite && "fill-current")} strokeWidth={1.75} />
       </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          aria-label="Page actions"
-          className={cn("flex size-7 items-center justify-center rounded-md", ink)}
-        >
-          <MoreHorizontal className="size-4" strokeWidth={1.75} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-44">
-          <DropdownMenuItem onClick={() => void onFavorite()}>
-            <Star className={cn("size-3.5", isFavorite && "fill-current")} />
-            {isFavorite ? "Remove from favorites" : "Add to favorites"}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void copyLink()}>
-            <Link className="size-3.5" />
-            Copy link
-          </DropdownMenuItem>
-          {canShare ? (
-            <>
-              <DropdownMenuItem onClick={() => void onDuplicate()}>
-                <Copy className="size-3.5" />
-                Duplicate
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderInput className="size-3.5" />
-                  Move to
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-72 min-w-52">
-                  <DropdownMenuItem onClick={() => void onMove(null)}>
-                    Top level
+      <WorkspaceMenu label="Page actions">
+        <DropdownMenuItem onClick={() => void onFavorite()}>
+          <Star className={cn("size-3.5", isFavorite && "fill-current")} />
+          {isFavorite ? "Remove from favorites" : "Add to favorites"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void copyLink()}>
+          <Link className="size-3.5" />
+          Copy link
+        </DropdownMenuItem>
+        {canShare ? (
+          <>
+            <DropdownMenuItem onClick={() => void onDuplicate()}>
+              <Copy className="size-3.5" />
+              Duplicate
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInput className="size-3.5" />
+                Move to
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-72 min-w-52">
+                <DropdownMenuItem onClick={() => void onMove(null)}>
+                  Top level
+                </DropdownMenuItem>
+                {destinations.length > 0 ? <DropdownMenuSeparator /> : null}
+                {destinations.map((item) => (
+                  <DropdownMenuItem key={item._id} onClick={() => void onMove(item._id)}>
+                    <span className="max-w-52 truncate">
+                      {item.icon ? `${item.icon} ` : ""}
+                      {item.title || "Untitled"}
+                    </span>
                   </DropdownMenuItem>
-                  {destinations.length > 0 ? <DropdownMenuSeparator /> : null}
-                  {destinations.map((item) => (
-                    <DropdownMenuItem key={item._id} onClick={() => void onMove(item._id)}>
-                      <span className="max-w-52 truncate">
-                        {item.icon ? `${item.icon} ` : ""}
-                        {item.title || "Untitled"}
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => void onTrash()}>
-                Move to trash
-              </DropdownMenuItem>
-            </>
-          ) : null}
-          <VersionHistory documentId={documentId} canEdit={canEdit} />
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-          >
-            {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-          </DropdownMenuItem>
-          <div className="flex items-center justify-between px-1.5 py-1">
-            <span className="text-sm">Account</span>
-            <UserButton />
-          </div>
-        </DropdownMenuContent>
-      </DropdownMenu>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void onTrash()}>
+              Move to trash
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        <VersionHistory documentId={documentId} canEdit={canEdit} />
+      </WorkspaceMenu>
     </div>
   );
 }
@@ -417,7 +545,7 @@ function RoleMenu({
   locked = false,
   onChange,
 }: {
-  value: AccessLevel;
+  value: AccessLevel | "none";
   options: AccessLevel[];
   locked?: boolean;
   onChange: (level: AccessLevel) => void;
@@ -425,7 +553,7 @@ function RoleMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[13px] text-foreground hover:bg-accent">
-        {ROLE_LABEL[value]}
+        {value === "none" ? "No access" : ROLE_LABEL[value]}
         <ChevronDown className="size-3" strokeWidth={2} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">

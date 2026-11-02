@@ -120,3 +120,257 @@
   background: rgba(255, 255, 255, 0.06);
   color: #f0efed;
 }
+
+.bn-editor .remote-caret {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  margin-left: -1px;
+  border-left: 2px solid var(--remote-caret);
+  vertical-align: text-bottom;
+  pointer-events: none;
+  user-select: none;
+  z-index: 4;
+  box-shadow: none;
+}
+
+.bn-editor .remote-caret-flag {
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: -1px;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 0 5px;
+  border-radius: 6px 6px 6px 0;
+  background: var(--remote-caret);
+  color: #fff;
+  font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  user-select: none;
+  box-shadow: none;
+}
+
+.bn-editor .remote-caret-selection {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.potion-comment-mark {
+  background: rgba(255, 200, 0, 0.28);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  cursor: pointer;
+}
+
+.potion-comment-mark-selected {
+  background: rgba(255, 200, 0, 0.46);
+}
+
+.dark .potion-comment-mark {
+  background: rgba(255, 196, 72, 0.2);
+}
+
+.dark .potion-comment-mark-selected {
+  background: rgba(255, 196, 72, 0.32);
+}
+
+.potion-comment-card {
+  border: 1px solid #e6e5e3;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 15, 15, 0.04), 0 4px 12px rgba(15, 15, 15, 0.05);
+  color: #2c2c2b;
+  font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI Variable Display", "Segoe UI", Helvetica, Arial, sans-serif;
+  transition:
+    border-color 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.potion-comment-card:hover {
+  background: #f4f3f2;
+  transform: translateX(-4px);
+}
+
+.potion-comment-actions {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.potion-comment-card:hover > .potion-comment-actions,
+.potion-comment-card[data-actions="open"] > .potion-comment-actions,
+.group\/comment:hover > .potion-comment-actions-row,
+.potion-comment-actions-row[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.potion-comment-actions-row {
+  top: 0;
+  right: 0;
+}
+
+.potion-comment-action {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #5f5e59;
+  cursor: pointer;
+}
+
+.potion-comment-action:hover {
+  background: rgba(33, 27, 23, 0.06);
+}
+
+.potion-reply-shell {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0 4px 0 10px;
+  box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.14);
+}
+
+.potion-reply-shell:focus-within {
+  box-shadow: 0 0 0 2px #2383e2;
+}
+
+.potion-reply-icon,
+.potion-reply-send {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #a19e99;
+}
+
+.potion-reply-icon:hover {
+  background: rgba(33, 27, 23, 0.06);
+  color: #5f5e59;
+}
+
+.potion-reply-send {
+  background: #ececeb;
+  color: #b5b3ae;
+}
+
+.potion-reply-send:not(:disabled) {
+  background: #2c2c2b;
+  color: #fff;
+}
+
+.dark .potion-reply-shell {
+  background: #252525;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.dark .potion-reply-shell:focus-within {
+  box-shadow: 0 0 0 2px #2383e2;
+}
+
+.dark .potion-reply-icon:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f0efed;
+}
+
+.dark .potion-reply-send {
+  background: #3a3a38;
+  color: #7d7a75;
+}
+
+.dark .potion-reply-send:not(:disabled) {
+  background: #f0efed;
+  color: #191919;
+}
+
+.potion-comment-compose {
+  animation: potion-comment-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes potion-comment-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .potion-comment-card,
+  .potion-comment-card:hover,
+  .potion-comment-card[data-active="true"],
+  .potion-comment-actions,
+  .potion-comment-compose {
+    transform: none;
+    transition: none;
+    animation: none;
+  }
+}
+
+.potion-comment-card[data-active="true"],
+.potion-comment-card[data-active="true"]:hover {
+  border-color: #d3d1cb;
+  background: #f4f3f2;
+  box-shadow: 0 1px 3px rgba(15, 15, 15, 0.07), 0 6px 16px rgba(15, 15, 15, 0.06);
+  transform: translateX(-8px);
+}
+
+.dark .potion-comment-card {
+  border-color: #383836;
+  background: #202020;
+  color: #f0efed;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.dark .potion-comment-card:hover {
+  background: #1a1a1a;
+}
+
+.dark .potion-comment-card[data-active="true"],
+.dark .potion-comment-card[data-active="true"]:hover {
+  border-color: #4a4a48;
+  background: #1a1a1a;
+}
+
+.dark .potion-comment-actions {
+  background: #202020;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.dark .potion-comment-action {
+  color: #bcbab6;
+}
+
+.dark .potion-comment-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

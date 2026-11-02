@@ -13,7 +13,10 @@ import { setSavePhase, useEditorSaveState } from "@/components/editor/save-state
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { InlineComments } from "@/components/editor/inline-comments";
 import { editorSchema, PageMentionMenu } from "@/components/editor/page-mention";
+import { useLiveCarets } from "@/components/editor/remote-carets";
+import { useConvexThreadStore } from "@/components/editor/convex-thread-store";
 
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
@@ -34,6 +37,8 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });
   const canEdit = access?.level !== "view";
+  const canWrite = access !== undefined && access.level !== "view";
+  const threadStore = useConvexThreadStore(id, canWrite);
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
   const storageUrl = useMutation(api.documents.storageUrl);
   const uploadFileRef = useRef<(file: File) => Promise<string>>(async () => {
@@ -61,6 +66,7 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
   const { resolvedTheme } = useTheme();
   const creating = useRef(false);
   const editor = sync.editor;
+  useLiveCarets(editor, id);
 
   useEffect(() => {
     if (!editor) return;
@@ -99,6 +105,7 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
       filePanel={canEdit}
     >
       <PageMentionMenu documentId={documentId} />
+      <InlineComments store={threadStore} canWrite={canWrite} />
     </BlockNoteView>
   );
 }

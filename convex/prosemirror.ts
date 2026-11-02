@@ -1,11 +1,11 @@
 import { ProsemirrorSync } from "@convex-dev/prosemirror-sync";
-import { Transform } from "@tiptap/pm/transform";
+import { Step, Transform } from "@tiptap/pm/transform";
 import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireAccess } from "./lib/access";
 import { pagePmSchema } from "./lib/pmSchema";
 import { plainTextFromSnapshot } from "./lib/plaintext";
@@ -41,6 +41,59 @@ export const {
   },
   pruneSnapshots: false,
 });
+
+export const publicPage = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const token = args.token.trim();
+    if (!token || token.length > 128) {
+      return null;
+    }
+    const doc = await ctx.db
+      .query("documents")
+      .withIndex("by_share_token", (q) => q.eq("shareToken", token))
+      .unique();
+    if (!doc || doc.isArchived) {
+      return null;
+    }
+    const snapshot = await ctx.runQuery(components.prosemirrorSync.lib.getSnapshot, {
+      id: doc._id,
+    });
+    return {
+      title: doc.title,
+      icon: doc.icon,
+      coverUrl: doc.coverUrl,
+      snapshot: snapshot.content
+        ? await replaySteps(ctx, doc._id, snapshot.content, snapshot.version)
+        : null,
+    };
+  },
+});
+
+async function replaySteps(
+  ctx: QueryCtx,
+  id: string,
+  content: string,
+  version: number,
+) {
+  try {
+    const steps = await ctx.runQuery(components.prosemirrorSync.lib.getSteps, {
+      id,
+      version,
+    });
+    if (steps.steps.length === 0) {
+      return content;
+    }
+    const schema = pagePmSchema();
+    const transform = new Transform(schema.nodeFromJSON(JSON.parse(content)));
+    for (const step of steps.steps) {
+      transform.step(Step.fromJSON(schema, JSON.parse(step)));
+    }
+    return JSON.stringify(transform.doc.toJSON());
+  } catch {
+    return content;
+  }
+}
 
 export const listVersions = query({
   args: { id: v.id("documents") },

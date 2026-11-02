@@ -3,7 +3,6 @@
 import {
   OrganizationList,
   OrganizationSwitcher,
-  UserButton,
   useOrganization,
 } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
@@ -13,7 +12,6 @@ import { useEffect, useState } from "react";
 
 import { Breadcrumbs } from "@/components/editor/breadcrumbs";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { SearchCommand } from "@/components/search/search-command";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -24,8 +22,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { MembersButton } from "@/components/workspace/members-button";
-import { PageActions } from "@/components/workspace/page-topbar";
+import { PageActions, WorkspaceActions } from "@/components/workspace/page-topbar";
 import { cn } from "@/lib/utils";
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
@@ -36,9 +33,14 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     api.documents.list,
     organization ? {} : "skip",
   ) as PageDoc[] | undefined;
+  const pageInWorkspace = Boolean(
+    documentId && pages?.some((page) => page._id === documentId),
+  );
   const viewers = useQuery(
     api.documents.viewers,
-    documentId && organization ? { documentId: documentId as Id<"documents"> } : "skip",
+    documentId && organization && pageInWorkspace
+      ? { documentId: documentId as Id<"documents"> }
+      : "skip",
   ) as Array<{ userId: string; name: string; imageUrl: string | null }> | undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -145,17 +147,15 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 }}
               />
             </div>
-            {documentId ? <Breadcrumbs documentId={documentId} pages={pages} /> : null}
+            {documentId && pageInWorkspace ? (
+              <Breadcrumbs documentId={documentId} pages={pages} />
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {documentId ? (
+            {documentId && pageInWorkspace ? (
               <PageActions documentId={documentId} pages={pages} viewers={viewers} />
-            ) : (
-              <>
-                <MembersButton />
-                <ThemeToggle />
-                <UserButton />
-              </>
+            ) : documentId ? null : (
+              <WorkspaceActions />
             )}
           </div>
         </header>

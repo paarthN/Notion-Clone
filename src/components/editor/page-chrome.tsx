@@ -5,6 +5,7 @@ import { ImagePlus, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { PageAnchorMargin } from "@/components/editor/page-comments";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -87,7 +88,8 @@ export function PageChrome({
         </div>
       ) : null}
 
-      <div className="mx-auto w-full max-w-[720px]">
+      <div data-page-gutter>
+      <div data-page-column className="mx-auto w-full max-w-[720px]">
         {(page.coverUrl || (!canEdit && !page.icon)) ? null : (
           <div className="group/top relative h-[112px]">
             {page.icon ? (
@@ -162,7 +164,14 @@ export function PageChrome({
         ) : (
           <PageTitleText title={page.title} />
         )}
+        {page.kind === "page" ? null : (
+          <PageAnchorMargin
+            documentId={id}
+            canWrite={access !== undefined && access.level !== "view"}
+          />
+        )}
         {children}
+      </div>
       </div>
 
       <input

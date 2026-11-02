@@ -4,12 +4,22 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
-import { assertFullHolderRemains, requireAccess } from "./lib/access";
-import { requireOrg } from "./lib/org";
+import { assertFullHolderRemains, requireAccess, resolveLevel } from "./lib/access";
+import { requireOrg, type OrgContext } from "./lib/org";
 import { prosemirrorSync } from "./prosemirror";
 
 const EMPTY_DOC = { type: "doc", content: [] };
-const documentKind = v.union(v.literal("page"), v.literal("folder"));
+const documentKind = v.union(
+  v.literal("page"),
+  v.literal("folder"),
+  v.literal("database"),
+);
+const rowStatus = v.union(
+  v.literal("not_started"),
+  v.literal("in_progress"),
+  v.literal("done"),
+);
+const databaseView = v.union(v.literal("table"), v.literal("board"));
 const PRESENCE_TTL_MS = 30_000;
 
 export const session = query({
@@ -23,12 +33,13 @@ export const session = query({
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const { orgId } = await requireOrg(ctx);
+    const actor = await requireOrg(ctx);
     const docs = await ctx.db
       .query("documents")
-      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .withIndex("by_org", (q) => q.eq("orgId", actor.orgId))
       .collect();
-    return docs
+    const visible = await filterVisible(ctx, docs, actor);
+    return visible
       .filter((doc) => !doc.isArchived)
       .sort((a, b) => a.position - b.position)
       .map(withKind);
@@ -38,14 +49,15 @@ export const list = query({
 export const listTrash = query({
   args: {},
   handler: async (ctx) => {
-    const { orgId } = await requireOrg(ctx);
+    const actor = await requireOrg(ctx);
     const docs = await ctx.db
       .query("documents")
       .withIndex("by_org_archived", (q) =>
-        q.eq("orgId", orgId).eq("isArchived", true),
+        q.eq("orgId", actor.orgId).eq("isArchived", true),
       )
       .collect();
-    return docs.sort((a, b) => b.updatedAt - a.updatedAt).map(withKind);
+    const visible = await filterVisible(ctx, docs, actor);
+    return visible.sort((a, b) => b.updatedAt - a.updatedAt).map(withKind);
   },
 });
 
@@ -56,12 +68,13 @@ export const search = query({
     if (!needle) {
       return [];
     }
-    const { orgId } = await requireOrg(ctx);
+    const actor = await requireOrg(ctx);
     const docs = await ctx.db
       .query("documents")
-      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .withIndex("by_org", (q) => q.eq("orgId", actor.orgId))
       .collect();
-    const hits = docs.filter((doc) => {
+    const visible = await filterVisible(ctx, docs, actor);
+    const hits = visible.filter((doc) => {
       if (doc.isArchived) {
         return false;
       }
@@ -102,17 +115,20 @@ export const create = mutation({
     title: v.optional(v.string()),
     parentId: v.union(v.id("documents"), v.null()),
     kind: v.optional(documentKind),
+    view: v.optional(databaseView),
   },
   handler: async (ctx, args) => {
     const { orgId, userId } = await requireOrg(ctx);
     const kind = args.kind ?? "page";
-    let generalAccess: "edit" | "view" | undefined;
+    let generalAccess: "edit" | "view" | "none" | undefined;
+    let accessBeforePrivate: "edit" | "view" | undefined;
     if (args.parentId) {
       const parent = await requireAccess(ctx, args.parentId, "edit");
       if (parent.doc.isArchived) {
         throw new Error("Parent page not found");
       }
       generalAccess = parent.doc.generalAccess;
+      accessBeforePrivate = parent.doc.accessBeforePrivate;
     }
 
     const siblings = await ctx.db
@@ -137,6 +153,8 @@ export const create = mutation({
       kind,
       plainText: "",
       ...(generalAccess ? { generalAccess } : {}),
+      ...(accessBeforePrivate ? { accessBeforePrivate } : {}),
+      ...(kind === "database" && args.view ? { view: args.view } : {}),
     });
 
     await ctx.db.insert("access", {
@@ -207,6 +225,69 @@ export const setCover = mutation({
       : null;
     await ctx.db.patch("documents", args.id, {
       coverUrl,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const setProperties = mutation({
+  args: {
+    id: v.id("documents"),
+    status: v.optional(v.union(rowStatus, v.null())),
+    dueAt: v.optional(v.union(v.number(), v.null())),
+    personId: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    if (
+      args.status === undefined &&
+      args.dueAt === undefined &&
+      args.personId === undefined
+    ) {
+      throw new Error("Nothing to update");
+    }
+    await requireAccess(ctx, args.id, "edit");
+    const patch: {
+      updatedAt: number;
+      status?: "not_started" | "in_progress" | "done";
+      dueAt?: number;
+      personId?: string;
+    } = { updatedAt: Date.now() };
+    if (args.status !== undefined) {
+      patch.status = args.status ?? undefined;
+    }
+    if (args.dueAt !== undefined) {
+      if (args.dueAt !== null && !Number.isFinite(args.dueAt)) {
+        throw new Error("Invalid date");
+      }
+      patch.dueAt = args.dueAt ?? undefined;
+    }
+    if (args.personId !== undefined) {
+      if (args.personId === null) {
+        patch.personId = undefined;
+      } else {
+        const personId = args.personId.trim();
+        if (!personId || personId.length > 256) {
+          throw new Error("Invalid member");
+        }
+        patch.personId = personId;
+      }
+    }
+    await ctx.db.patch("documents", args.id, patch);
+  },
+});
+
+export const setView = mutation({
+  args: {
+    id: v.id("documents"),
+    view: databaseView,
+  },
+  handler: async (ctx, args) => {
+    const { doc } = await requireAccess(ctx, args.id, "edit");
+    if ((doc.kind ?? "page") !== "database") {
+      throw new Error("This page is not a database");
+    }
+    await ctx.db.patch("documents", args.id, {
+      view: args.view,
       updatedAt: Date.now(),
     });
   },
@@ -301,6 +382,13 @@ export const duplicate = mutation({
       kind,
       plainText: source.plainText ?? "",
       ...(source.generalAccess ? { generalAccess: source.generalAccess } : {}),
+      ...(source.accessBeforePrivate
+        ? { accessBeforePrivate: source.accessBeforePrivate }
+        : {}),
+      ...(source.status ? { status: source.status } : {}),
+      ...(source.dueAt !== undefined ? { dueAt: source.dueAt } : {}),
+      ...(source.personId ? { personId: source.personId } : {}),
+      ...(source.view ? { view: source.view } : {}),
     });
 
     await ctx.db.insert("access", {
@@ -362,7 +450,7 @@ export const heartbeat = mutation({
       .query("presence")
       .withIndex("by_document", (q) => q.eq("documentId", args.documentId))
       .collect();
-    const mine = rows.find((row) => row.userId === actor.userId);
+    const mine = newestOwn(rows, actor.orgId, actor.userId);
     const next = {
       orgId: actor.orgId,
       documentId: args.documentId,
@@ -417,14 +505,73 @@ export const viewers = query({
           userId: row.userId,
           name: viewerName(row.name, row.userId),
           imageUrl: row.imageUrl,
+          cursor: cursorFromRow(row),
         },
       ];
     });
   },
 });
 
+const cursorPoint = {
+  blockId: v.string(),
+  offset: v.number(),
+  anchorBlockId: v.optional(v.string()),
+  anchorOffset: v.optional(v.number()),
+};
+
+export const cursor = mutation({
+  args: {
+    documentId: v.id("documents"),
+    cursor: v.union(v.null(), v.object(cursorPoint)),
+  },
+  handler: async (ctx, args) => {
+    const actor = await requireAccess(ctx, args.documentId, "view");
+    const rows = await ctx.db
+      .query("presence")
+      .withIndex("by_document", (q) => q.eq("documentId", args.documentId))
+      .collect();
+    const mine = newestOwn(rows, actor.orgId, actor.userId);
+    const now = Date.now();
+    const identity = {
+      orgId: actor.orgId,
+      documentId: args.documentId,
+      userId: actor.userId,
+      name: viewerName(actor.name, actor.userId),
+      imageUrl: actor.imageUrl,
+      updatedAt: now,
+    };
+    const point = args.cursor ? normalizeCursor(args.cursor) : null;
+    if (!mine) {
+      if (!point) return;
+      await ctx.db.insert("presence", {
+        ...identity,
+        blockId: point.blockId,
+        offset: point.offset,
+        ...(point.anchorBlockId !== undefined && point.anchorOffset !== undefined
+          ? {
+              anchorBlockId: point.anchorBlockId,
+              anchorOffset: point.anchorOffset,
+            }
+          : {}),
+      });
+      return;
+    }
+    await ctx.db.patch("presence", mine._id, {
+      ...identity,
+      blockId: point?.blockId,
+      offset: point?.offset,
+      anchorBlockId: point?.anchorBlockId,
+      anchorOffset: point?.anchorOffset,
+    });
+  },
+});
+
 const accessLevel = v.union(v.literal("full"), v.literal("edit"), v.literal("view"));
-const workspaceAccess = v.union(v.literal("edit"), v.literal("view"));
+const workspaceAccess = v.union(
+  v.literal("edit"),
+  v.literal("view"),
+  v.literal("none"),
+);
 
 export const pageAccess = query({
   args: { id: v.id("documents") },
@@ -437,6 +584,8 @@ export const pageAccess = query({
     return {
       level: actor.level,
       generalAccess: actor.doc.generalAccess ?? "edit",
+      accessBeforePrivate: actor.doc.accessBeforePrivate ?? null,
+      shareToken: actor.doc.shareToken ?? null,
       grants: rows
         .filter((row) => row.orgId === actor.orgId)
         .map((row) => ({ userId: row.userId, level: row.level })),
@@ -457,9 +606,22 @@ export const setAccess = mutation({
     }
     const actor = await requireAccess(ctx, args.id, "full");
     if (args.generalAccess) {
-      await ctx.db.patch("documents", args.id, {
-        generalAccess: args.generalAccess,
-      });
+      if (args.generalAccess === "none") {
+        const current = actor.doc.generalAccess;
+        const remembered =
+          current === "edit" || current === "view"
+            ? current
+            : actor.doc.accessBeforePrivate ?? "edit";
+        await ctx.db.patch("documents", args.id, {
+          generalAccess: "none",
+          accessBeforePrivate: remembered,
+        });
+      } else {
+        await ctx.db.patch("documents", args.id, {
+          generalAccess: args.generalAccess,
+          accessBeforePrivate: undefined,
+        });
+      }
     }
     if (args.userId === undefined) {
       return;
@@ -502,10 +664,63 @@ export const setAccess = mutation({
   },
 });
 
+export const setShareLink = mutation({
+  args: { id: v.id("documents"), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const actor = await requireAccess(ctx, args.id, "full");
+    if (!args.enabled) {
+      await ctx.db.patch("documents", args.id, { shareToken: undefined });
+      return null;
+    }
+    if (actor.doc.shareToken) {
+      return actor.doc.shareToken;
+    }
+    const token = newShareToken();
+    await ctx.db.patch("documents", args.id, { shareToken: token });
+    return token;
+  },
+});
+
+function newShareToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let token = "";
+  for (const byte of bytes) {
+    token += byte.toString(16).padStart(2, "0");
+  }
+  return token;
+}
+
 function withKind(doc: Doc<"documents">) {
-  const { plainText, ...rest } = doc;
+  const { plainText, status, dueAt, personId, view, shareToken, ...rest } = doc;
   void plainText;
-  return { ...rest, kind: doc.kind ?? "page" };
+  void shareToken;
+  return {
+    ...rest,
+    kind: doc.kind ?? "page",
+    ...(status !== undefined ? { status } : {}),
+    ...(dueAt !== undefined ? { dueAt } : {}),
+    ...(personId !== undefined ? { personId } : {}),
+    ...(view !== undefined ? { view } : {}),
+  };
+}
+
+async function filterVisible(
+  ctx: QueryCtx,
+  docs: Doc<"documents">[],
+  actor: OrgContext,
+) {
+  if (actor.role === "admin") {
+    return docs;
+  }
+  const visible: Doc<"documents">[] = [];
+  for (const doc of docs) {
+    const level = await resolveLevel(ctx, doc, actor);
+    if (level !== "none") {
+      visible.push(doc);
+    }
+  }
+  return visible;
 }
 
 function matchSnippet(text: string, needle: string) {
@@ -531,6 +746,66 @@ function viewerName(name: string, userId: string) {
     return "Member";
   }
   return trimmed;
+}
+
+function newestOwn(rows: Doc<"presence">[], orgId: string, userId: string) {
+  let match: Doc<"presence"> | undefined;
+  for (const row of rows) {
+    if (row.orgId !== orgId || row.userId !== userId) continue;
+    if (!match || row.updatedAt >= match.updatedAt) match = row;
+  }
+  return match;
+}
+
+function cursorFromRow(row: Doc<"presence">) {
+  if (row.blockId === undefined || row.offset === undefined) return null;
+  const cursor: {
+    blockId: string;
+    offset: number;
+    anchor?: { blockId: string; offset: number };
+  } = { blockId: row.blockId, offset: row.offset };
+  if (
+    row.anchorBlockId !== undefined &&
+    row.anchorOffset !== undefined &&
+    (row.anchorBlockId !== row.blockId || row.anchorOffset !== row.offset)
+  ) {
+    cursor.anchor = { blockId: row.anchorBlockId, offset: row.anchorOffset };
+  }
+  return cursor;
+}
+
+function normalizeCursor(cursor: {
+  blockId: string;
+  offset: number;
+  anchorBlockId?: string;
+  anchorOffset?: number;
+}) {
+  const blockId = readBlockId(cursor.blockId);
+  const offset = readOffset(cursor.offset);
+  let anchorBlockId: string | undefined;
+  let anchorOffset: number | undefined;
+  if (cursor.anchorBlockId !== undefined && cursor.anchorOffset !== undefined) {
+    anchorBlockId = readBlockId(cursor.anchorBlockId);
+    anchorOffset = readOffset(cursor.anchorOffset);
+    if (anchorBlockId === blockId && anchorOffset === offset) {
+      anchorBlockId = undefined;
+      anchorOffset = undefined;
+    }
+  }
+  return { blockId, offset, anchorBlockId, anchorOffset };
+}
+
+function readBlockId(value: string) {
+  const id = value.trim();
+  if (!id || id.length > 128) throw new Error("Invalid cursor");
+  return id;
+}
+
+function readOffset(value: number) {
+  if (!Number.isInteger(value) || value < 0 || value > 1_000_000) {
+    throw new Error("Invalid cursor");
+  }
+  return value;
 }
 
 async function setArchived(

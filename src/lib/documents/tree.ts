@@ -1,5 +1,17 @@
 import type { Id } from "../../../convex/_generated/dataModel";
 
+export type DocumentKind = "page" | "folder" | "database";
+export type RowStatus = "not_started" | "in_progress" | "done";
+export type DatabaseViewMode = "table" | "board";
+
+export const ROW_STATUSES = ["not_started", "in_progress", "done"] as const;
+
+export const STATUS_LABEL: Record<RowStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  done: "Done",
+};
+
 export type PageDoc = {
   _id: Id<"documents">;
   title: string;
@@ -9,9 +21,14 @@ export type PageDoc = {
   position: number;
   isArchived: boolean;
   updatedAt: number;
-  kind: "page" | "folder";
+  kind: DocumentKind;
   createdBy: string;
-  generalAccess?: "edit" | "view";
+  generalAccess?: "edit" | "view" | "none";
+  accessBeforePrivate?: "edit" | "view";
+  status?: RowStatus;
+  dueAt?: number;
+  personId?: string;
+  view?: DatabaseViewMode;
 };
 
 export type PageNode = PageDoc & { children: PageNode[] };

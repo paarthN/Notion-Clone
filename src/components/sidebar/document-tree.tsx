@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { FileText, Folder, Plus } from "lucide-react";
+import { FileText, Folder, Plus, Table } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -102,15 +102,21 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
   );
 
   const onCreate = useCallback(
-    async (kind: "page" | "folder") => {
+    async (kind: "page" | "folder" | "database") => {
       try {
         const id = await create({ parentId: null, title: "Untitled", kind });
-        if (kind === "page") {
+        if (kind !== "folder") {
           onNavigate?.();
           router.push(`/app/p/${id}`);
         }
       } catch {
-        toast.error(kind === "folder" ? "Couldn't create folder" : "Couldn't create page");
+        toast.error(
+          kind === "folder"
+            ? "Couldn't create folder"
+            : kind === "database"
+              ? "Couldn't create database"
+              : "Couldn't create page",
+        );
       }
     },
     [create, onNavigate, router],
@@ -130,7 +136,7 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="New page or folder"
+                aria-label="New page, folder, or database"
                 className="opacity-0 group-hover/section:opacity-100"
               />
             }
@@ -145,6 +151,10 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
             <DropdownMenuItem onClick={() => void onCreate("folder")}>
               <Folder className="size-3.5" />
               New folder
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void onCreate("database")}>
+              <Table className="size-3.5" />
+              New database
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

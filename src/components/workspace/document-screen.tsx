@@ -6,6 +6,8 @@ import { Component, useEffect, type ReactNode } from "react";
 
 import { CollaborativeEditor } from "@/components/editor/collaborative-editor";
 import { PageChrome } from "@/components/editor/page-chrome";
+import { DatabaseView } from "@/components/workspace/database-view";
+import { RowProperties } from "@/components/workspace/row-properties";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import type { PageDoc } from "@/lib/documents/tree";
@@ -15,10 +17,12 @@ export function DocumentScreen({ documentId }: { documentId: string }) {
   const pages = useQuery(api.documents.list) as PageDoc[] | undefined;
   const heartbeat = useMutation(api.documents.heartbeat);
   const page = pages?.find((item) => item._id === id);
+  const parent = page?.parentId ? pages?.find((item) => item._id === page.parentId) : undefined;
   const isFolder = page?.kind === "folder";
+  const isDatabase = page?.kind === "database";
 
   useEffect(() => {
-    if (pages !== undefined && !page) {
+    if (!page) {
       return;
     }
     const beat = () => {
@@ -27,26 +31,29 @@ export function DocumentScreen({ documentId }: { documentId: string }) {
     beat();
     const timer = window.setInterval(beat, 10_000);
     return () => window.clearInterval(timer);
-  }, [id, heartbeat, pages, page]);
+  }, [id, heartbeat, page]);
 
   if (pages !== undefined && !page) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This page is missing, or it is in the trash.
+        You don't have access to this page.
       </p>
     );
   }
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div data-page-scroll className="relative min-h-0 flex-1 overflow-y-auto">
         <PageChrome documentId={documentId}>
           {isFolder ? (
             <p className="px-2 text-[16px] leading-6 text-[#5f5e59] dark:text-[#bcbab6]">
               This is a folder.
             </p>
+          ) : isDatabase && page ? (
+            <DatabaseView databaseId={page._id} pages={pages ?? []} />
           ) : page ? (
             <>
+              {parent?.kind === "database" ? <RowProperties page={page} /> : null}
               <EditorBoundary>
                 <CollaborativeEditor documentId={documentId} />
               </EditorBoundary>

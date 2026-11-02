@@ -1,31 +1,19 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
-import { FilePlus2, FileText } from "lucide-react";
+import { useQuery } from "convex/react";
+import { FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { toast } from "sonner";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { DueTasks } from "@/components/workspace/due-tasks";
+import { Mentions } from "@/components/workspace/mentions";
+import { StartActions } from "@/components/workspace/start-actions";
 import type { PageDoc } from "@/lib/documents/tree";
 import { api } from "../../../convex/_generated/api";
 
 export default function WorkspaceHome() {
   const router = useRouter();
   const pages = useQuery(api.documents.list) as PageDoc[] | undefined;
-  const create = useMutation(api.documents.create);
-  const [creating, setCreating] = useState(false);
-
-  const onCreate = async () => {
-    setCreating(true);
-    try {
-      const id = await create({ parentId: null, title: "Untitled" });
-      router.push(`/app/p/${id}`);
-    } catch {
-      toast.error("Couldn't create page");
-      setCreating(false);
-    }
-  };
 
   const recent = (pages ?? [])
     .filter((page) => page.kind !== "folder")
@@ -35,19 +23,13 @@ export default function WorkspaceHome() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-[720px] px-12 pt-16 pb-24">
+        <StartActions />
+        <Mentions pagesLoaded={pages !== undefined} />
+        <DueTasks pages={pages} />
         <div className="mb-1 flex h-8 items-center justify-between">
           <h1 className="text-[12px] font-medium text-[#a19e99] dark:text-[#7d7a75]">
             Recent
           </h1>
-          <button
-            type="button"
-            onClick={() => void onCreate()}
-            disabled={creating}
-            className="inline-flex h-7 items-center rounded-md px-2 text-[14px] text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <FilePlus2 className="mr-1.5 size-4" />
-            {creating ? "Creating…" : "New page"}
-          </button>
         </div>
         {pages === undefined ? (
           <div className="flex flex-col gap-1">

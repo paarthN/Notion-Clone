@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   Star,
+  Table,
   Trash2,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -57,6 +58,7 @@ export function DocumentItem({
   const router = useRouter();
   const pathname = usePathname();
   const isFolder = document.kind === "folder";
+  const isDatabase = document.kind === "database";
   const isActive = !isFolder && pathname === `/app/p/${document._id}`;
   const favoriteIds = useQuery(api.documents.favorites) as string[] | undefined;
   const isFavorite = favoriteIds?.includes(document._id) ?? false;
@@ -73,12 +75,12 @@ export function DocumentItem({
   const skipClick = useRef(false);
 
   useEffect(() => {
-    if (drop?.id !== document._id || drop.placement !== "inside" || expanded) {
+    if (isDatabase || drop?.id !== document._id || drop.placement !== "inside" || expanded) {
       return;
     }
     const timer = window.setTimeout(() => setExpanded(true), 450);
     return () => window.clearTimeout(timer);
-  }, [drop, document._id, expanded]);
+  }, [drop, document._id, expanded, isDatabase]);
 
   const children = pages.filter((page) => page.parentId === document._id);
   const indentPadding = depth * 12 + 12;
@@ -114,7 +116,7 @@ export function DocumentItem({
   }, [isFolder, onNavigate, router, document._id]);
 
   const onCreateChild = useCallback(
-    async (kind: "page" | "folder") => {
+    async (kind: "page" | "folder" | "database") => {
       try {
         const childId = await create({
           parentId: document._id,
@@ -122,12 +124,18 @@ export function DocumentItem({
           kind,
         });
         setExpanded(true);
-        if (kind === "page") {
+        if (kind !== "folder") {
           onNavigate?.();
           router.push(`/app/p/${childId}`);
         }
       } catch {
-        toast.error(kind === "folder" ? "Couldn't create folder" : "Couldn't create page");
+        toast.error(
+          kind === "folder"
+            ? "Couldn't create folder"
+            : kind === "database"
+              ? "Couldn't create database"
+              : "Couldn't create page",
+        );
       }
     },
     [create, document._id, onNavigate, router],
@@ -238,22 +246,24 @@ export function DocumentItem({
         {showAfter ? (
           <span className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 bg-foreground" />
         ) : null}
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse" : "Expand"}
-          onClick={(event) => {
-            event.stopPropagation();
-            setExpanded((prev) => !prev);
-          }}
-          className={cn(
-            "absolute flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground opacity-0 hover:bg-black/10 group-hover/item:opacity-100 dark:hover:bg-white/10",
-            expanded && "opacity-100",
-          )}
-          style={{ left: Math.max(indentPadding - 18, 2) }}
-        >
-          {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        </button>
+        {isDatabase ? null : (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse" : "Expand"}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((prev) => !prev);
+            }}
+            className={cn(
+              "absolute flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground opacity-0 hover:bg-black/10 group-hover/item:opacity-100 dark:hover:bg-white/10",
+              expanded && "opacity-100",
+            )}
+            style={{ left: Math.max(indentPadding - 18, 2) }}
+          >
+            {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
+        )}
 
         {document.icon ? (
           <span className="mr-1.5 text-[16px] leading-none">{document.icon}</span>
@@ -263,6 +273,8 @@ export function DocumentItem({
           ) : (
             <Folder className="mr-1.5 h-4 w-4 shrink-0 text-muted-foreground" />
           )
+        ) : isDatabase ? (
+          <Table className="mr-1.5 h-4 w-4 shrink-0 text-muted-foreground" />
         ) : (
           <FileText className="mr-1.5 h-4 w-4 shrink-0 text-muted-foreground" />
         )}
@@ -314,6 +326,10 @@ export function DocumentItem({
                   <Folder className="size-3.5" />
                   New folder
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void onCreateChild("database")}>
+                  <Table className="size-3.5" />
+                  New database
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void onToggleFavorite()}>
                   <Star className={cn("size-3.5", isFavorite && "fill-current text-amber-500")} />
@@ -350,7 +366,7 @@ export function DocumentItem({
         ) : null}
       </div>
 
-      {expanded ? (
+      {expanded && !isDatabase ? (
         <div>
           {children.length === 0 ? (
             <p
