@@ -298,7 +298,7 @@ export function PageActions({
     }
   };
 
-  const onMemberAccess = async (userId: string, level: AccessLevel) => {
+  const onMemberAccess = async (userId: string, level: AccessLevel | "none") => {
     if (!canShare) return;
     try {
       await setAccess({ id, userId, level });
@@ -376,7 +376,7 @@ export function PageActions({
                     {canShare ? (
                       <RoleMenu
                         value={level}
-                        options={["full", "edit", "view"]}
+                        options={["full", "edit", "view", "none"]}
                         locked={member.admin}
                         onChange={(next) => void onMemberAccess(member.userId, next)}
                       />
@@ -546,14 +546,14 @@ function RoleMenu({
   onChange,
 }: {
   value: AccessLevel | "none";
-  options: AccessLevel[];
+  options: Array<AccessLevel | "none">;
   locked?: boolean;
-  onChange: (level: AccessLevel) => void;
+  onChange: (level: AccessLevel | "none") => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[13px] text-foreground hover:bg-accent">
-        {value === "none" ? "No access" : ROLE_LABEL[value]}
+        {roleLabel(value)}
         <ChevronDown className="size-3" strokeWidth={2} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">
@@ -565,11 +565,15 @@ function RoleMenu({
               if (option !== value) onChange(option);
             }}
           >
-            <span className="flex-1">{ROLE_LABEL[option]}</span>
+            <span className="flex-1">{roleLabel(option)}</span>
             {option === value ? <Check className="size-3.5" /> : null}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function roleLabel(level: AccessLevel | "none") {
+  return level === "none" ? "No access" : ROLE_LABEL[level];
 }

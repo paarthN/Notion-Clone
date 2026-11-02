@@ -27,6 +27,9 @@ export default defineSchema({
     dueAt: v.optional(v.number()),
     personId: v.optional(v.string()),
     view: v.optional(v.union(v.literal("table"), v.literal("board"))),
+    statusFilter: v.optional(
+      v.union(v.literal("not_started"), v.literal("in_progress"), v.literal("done")),
+    ),
   })
     .index("by_org", ["orgId"])
     .index("by_org_parent", ["orgId", "parentId"])
@@ -58,7 +61,12 @@ export default defineSchema({
     orgId: v.string(),
     documentId: v.id("documents"),
     userId: v.string(),
-    level: v.union(v.literal("full"), v.literal("edit"), v.literal("view")),
+    level: v.union(
+      v.literal("full"),
+      v.literal("edit"),
+      v.literal("view"),
+      v.literal("none"),
+    ),
   })
     .index("by_document", ["documentId"])
     .index("by_document_user", ["documentId", "userId"]),
@@ -93,4 +101,10 @@ export default defineSchema({
   })
     .index("by_document", ["orgId", "documentId"])
     .index("by_org", ["orgId"]),
+
+  mentionReads: defineTable({
+    orgId: v.string(),
+    userId: v.string(),
+    commentId: v.id("comments"),
+  }).index("by_org_user_comment", ["orgId", "userId", "commentId"]),
 });

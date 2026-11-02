@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 
 import { useWorkspaceMembers } from "@/components/workspace/row-properties";
@@ -9,6 +9,7 @@ import { api } from "../../../convex/_generated/api";
 export function Mentions({ pagesLoaded }: { pagesLoaded: boolean }) {
   const router = useRouter();
   const mentions = useQuery(api.comments.mentions);
+  const markRead = useMutation(api.comments.markMentionRead);
   const { members } = useWorkspaceMembers();
 
   if (!pagesLoaded || mentions === undefined || mentions.length === 0) return null;
@@ -27,7 +28,11 @@ export function Mentions({ pagesLoaded }: { pagesLoaded: boolean }) {
             <li key={mention._id}>
               <button
                 type="button"
-                onClick={() => router.push(`/app/p/${mention.documentId}`)}
+                onClick={() => {
+                  void markRead({ commentId: mention._id }).finally(() => {
+                    router.push(`/app/p/${mention.documentId}`);
+                  });
+                }}
                 className="flex h-8 w-full items-center gap-2 rounded-[6px] px-2 text-left hover:bg-accent"
               >
                 <span className="min-w-0 flex-1 truncate text-[14px] text-foreground">

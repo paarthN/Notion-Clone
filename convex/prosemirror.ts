@@ -5,7 +5,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireAccess } from "./lib/access";
 import { pagePmSchema } from "./lib/pmSchema";
 import { plainTextFromSnapshot } from "./lib/plaintext";
@@ -29,7 +29,7 @@ export const {
   checkWrite: async (ctx, id) => {
     await requireAccess(ctx, id as Id<"documents">, "edit");
   },
-  onSnapshot: async (ctx, id, snapshot) => {
+  onSnapshot: async (ctx, id, snapshot, _version) => {
     const documentId = id as Id<"documents">;
     const doc = await ctx.db.get("documents", documentId);
     if (doc) {
@@ -38,6 +38,7 @@ export const {
         plainText: plainTextFromSnapshot(snapshot),
       });
     }
+    await keepLatestSnapshots(ctx, documentId);
   },
   pruneSnapshots: false,
 });
@@ -105,6 +106,41 @@ export const listVersions = query({
   },
 });
 
+export const versionChange = query({
+  args: { id: v.id("documents"), version: v.number() },
+  handler: async (ctx, args) => {
+    await requireAccess(ctx, args.id, "view");
+    const versions = await ctx.runQuery(components.prosemirrorSync.lib.listSnapshots, {
+      id: args.id,
+    });
+    const index = versions.findIndex((row) => row.version === args.version);
+    if (index < 0) return null;
+    const selected = await ctx.runQuery(components.prosemirrorSync.lib.getSnapshot, {
+      id: args.id,
+      version: args.version,
+    });
+    if (!selected.content || selected.version !== args.version) return null;
+
+    if (index === 0) {
+      const current = await replaySteps(ctx, args.id, selected.content, selected.version);
+      return changedLines(linesFromSnapshot(selected.content), linesFromSnapshot(current));
+    }
+
+    const older = versions[index + 1];
+    let before: string[] = [];
+    if (older) {
+      const previous = await ctx.runQuery(components.prosemirrorSync.lib.getSnapshot, {
+        id: args.id,
+        version: older.version,
+      });
+      if (previous.content && previous.version === older.version) {
+        before = linesFromSnapshot(previous.content);
+      }
+    }
+    return changedLines(before, linesFromSnapshot(selected.content));
+  },
+});
+
 export const restore = mutation({
   args: { id: v.id("documents"), version: v.number() },
   handler: async (ctx, args) => {
@@ -144,4 +180,76 @@ export const restore = mutation({
     });
   },
 });
+
+const KEPT_SNAPSHOTS = 20;
+const CHANGE_CAP = 4;
+
+async function keepLatestSnapshots(ctx: MutationCtx, id: string) {
+  const saved = await ctx.runQuery(components.prosemirrorSync.lib.listSnapshots, { id });
+  if (saved.length < KEPT_SNAPSHOTS) return;
+  const oldestKept = saved[KEPT_SNAPSHOTS - 1];
+  if (!oldestKept) return;
+  await ctx.runMutation(components.prosemirrorSync.lib.deleteSnapshots, {
+    id,
+    beforeVersion: oldestKept.version,
+  });
+}
+
+function changedLines(before: string[], after: string[]) {
+  const counts = new Map<string, number>();
+  for (const line of before) {
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  const added: string[] = [];
+  for (const line of after) {
+    const left = counts.get(line) ?? 0;
+    if (left > 0) counts.set(line, left - 1);
+    else added.push(line);
+  }
+  const removed: string[] = [];
+  for (const line of before) {
+    const left = counts.get(line) ?? 0;
+    if (left > 0) {
+      removed.push(line);
+      counts.set(line, left - 1);
+    }
+  }
+  return {
+    added: added.slice(0, CHANGE_CAP).map(clipLine),
+    removed: removed.slice(0, CHANGE_CAP).map(clipLine),
+  };
+}
+
+function clipLine(line: string) {
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+function linesFromSnapshot(snapshot: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(snapshot);
+  } catch {
+    return [];
+  }
+  const content = (parsed as { content?: unknown }).content;
+  const blocks = Array.isArray(content) ? content : [parsed];
+  const lines: string[] = [];
+  for (const block of blocks) {
+    for (const line of blockText(block).split("\n")) {
+      const clean = line.replace(/\s+/g, " ").trim();
+      if (clean) lines.push(clean);
+    }
+  }
+  return lines;
+}
+
+function blockText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  if (Array.isArray(node)) return node.map(blockText).join("");
+  const record = node as { type?: unknown; text?: unknown; content?: unknown };
+  if (typeof record.text === "string") return record.text;
+  if (record.type === "hardBreak") return "\n";
+  if (record.content === undefined) return "";
+  return blockText(record.content);
+}
 

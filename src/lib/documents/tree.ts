@@ -29,6 +29,7 @@ export type PageDoc = {
   dueAt?: number;
   personId?: string;
   view?: DatabaseViewMode;
+  statusFilter?: RowStatus;
 };
 
 export type PageNode = PageDoc & { children: PageNode[] };

@@ -118,13 +118,27 @@ export const mentions = query({
   args: {},
   handler: async (ctx) => {
     const { orgId, userId } = await requireOrg(ctx);
-    const rows = await ctx.db
-      .query("comments")
-      .withIndex("by_org", (q) => q.eq("orgId", orgId))
-      .collect();
+    const [rows, reads] = await Promise.all([
+      ctx.db
+        .query("comments")
+        .withIndex("by_org", (q) => q.eq("orgId", orgId))
+        .collect(),
+      ctx.db
+        .query("mentionReads")
+        .withIndex("by_org_user_comment", (q) =>
+          q.eq("orgId", orgId).eq("userId", userId),
+        )
+        .collect(),
+    ]);
+    const readIds = new Set(reads.map((row) => row.commentId));
 
     const mentioned = rows
-      .filter((row) => row.userId !== userId && row.mentions.includes(userId))
+      .filter(
+        (row) =>
+          row.userId !== userId &&
+          row.mentions.includes(userId) &&
+          !readIds.has(row._id),
+      )
       .sort((a, b) => b.createdAt - a.createdAt || (a._id < b._id ? 1 : -1));
 
     const found: {
@@ -153,6 +167,35 @@ export const mentions = query({
     }
 
     return found;
+  },
+});
+
+export const markMentionRead = mutation({
+  args: { commentId: v.id("comments") },
+  handler: async (ctx, args) => {
+    const { orgId, userId } = await requireOrg(ctx);
+    const comment = await ctx.db.get("comments", args.commentId);
+    if (
+      !comment ||
+      comment.orgId !== orgId ||
+      comment.userId === userId ||
+      !comment.mentions.includes(userId)
+    ) {
+      return;
+    }
+    await requireAccess(ctx, comment.documentId, "view");
+    const existing = await ctx.db
+      .query("mentionReads")
+      .withIndex("by_org_user_comment", (q) =>
+        q.eq("orgId", orgId).eq("userId", userId).eq("commentId", args.commentId),
+      )
+      .unique();
+    if (existing) return;
+    await ctx.db.insert("mentionReads", {
+      orgId,
+      userId,
+      commentId: args.commentId,
+    });
   },
 });
 

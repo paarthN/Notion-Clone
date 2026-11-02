@@ -293,6 +293,23 @@ export const setView = mutation({
   },
 });
 
+export const setStatusFilter = mutation({
+  args: {
+    id: v.id("documents"),
+    status: v.union(rowStatus, v.null()),
+  },
+  handler: async (ctx, args) => {
+    const { doc } = await requireAccess(ctx, args.id, "edit");
+    if ((doc.kind ?? "page") !== "database") {
+      throw new Error("This page is not a database");
+    }
+    await ctx.db.patch("documents", args.id, {
+      statusFilter: args.status ?? undefined,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const archive = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
@@ -566,7 +583,12 @@ export const cursor = mutation({
   },
 });
 
-const accessLevel = v.union(v.literal("full"), v.literal("edit"), v.literal("view"));
+const accessLevel = v.union(
+  v.literal("full"),
+  v.literal("edit"),
+  v.literal("view"),
+  v.literal("none"),
+);
 const workspaceAccess = v.union(
   v.literal("edit"),
   v.literal("view"),
@@ -633,6 +655,7 @@ export const setAccess = mutation({
     if (args.level === undefined) {
       throw new Error("Missing access level");
     }
+    const level = args.level === null ? "none" : args.level;
     const existing = await ctx.db
       .query("access")
       .withIndex("by_document_user", (q) =>
@@ -642,18 +665,14 @@ export const setAccess = mutation({
     if (existing && existing.orgId !== actor.orgId) {
       throw new Error("Page not found");
     }
-    if (args.level === null) {
-      if (existing) {
-        await ctx.db.delete("access", existing._id);
-      }
-    } else if (existing) {
-      await ctx.db.patch("access", existing._id, { level: args.level });
+    if (existing) {
+      await ctx.db.patch("access", existing._id, { level });
     } else {
       await ctx.db.insert("access", {
         orgId: actor.orgId,
         documentId: args.id,
         userId,
-        level: args.level,
+        level,
       });
     }
     const doc = await ctx.db.get("documents", args.id);

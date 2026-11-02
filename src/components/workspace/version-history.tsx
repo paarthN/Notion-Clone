@@ -53,36 +53,76 @@ export function VersionHistory({
           versions.map((row) => {
             const confirming = armed === row.version;
             return (
-              <DropdownMenuItem
-                key={row.version}
-                closeOnClick={confirming}
-                onClick={(event) => {
-                  if (!canEdit) {
-                    event.preventDefault();
-                    return;
-                  }
-                  if (!confirming) {
-                    event.preventDefault();
-                    setArmed(row.version);
-                    return;
-                  }
-                  void onRestore(row.version);
-                }}
-              >
-                <span className="min-w-0 flex-1 truncate">
-                  {confirming ? "Replace the page with this save?" : versionLabel(row.createdAt)}
-                </span>
-                {canEdit && !confirming ? (
-                  <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
-                    Restore
+              <div key={row.version}>
+                <DropdownMenuItem
+                  closeOnClick={confirming && canEdit}
+                  onClick={(event) => {
+                    if (!confirming) {
+                      event.preventDefault();
+                      setArmed(row.version);
+                      return;
+                    }
+                    if (!canEdit) {
+                      event.preventDefault();
+                      return;
+                    }
+                    void onRestore(row.version);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {confirming && canEdit
+                      ? "Replace the page with this save?"
+                      : versionLabel(row.createdAt)}
                   </span>
+                  {canEdit && !confirming ? (
+                    <span className="shrink-0 text-[13px] text-[#7d7a75] dark:text-[#ada9a3]">
+                      Restore
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
+                {confirming ? (
+                  <div className="px-1.5 pb-1" onPointerDown={(event) => event.preventDefault()}>
+                    <VersionChange id={id} version={row.version} />
+                  </div>
                 ) : null}
-              </DropdownMenuItem>
+              </div>
             );
           })
         )}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
+  );
+}
+
+function VersionChange({ id, version }: { id: Id<"documents">; version: number }) {
+  const change = useQuery(api.prosemirror.versionChange, { id, version });
+  if (change === undefined) {
+    return <p className="text-[12px] leading-4 text-[#a19e99] dark:text-[#7d7a75]">…</p>;
+  }
+  if (change === null || (change.added.length === 0 && change.removed.length === 0)) {
+    return (
+      <p className="text-[12px] leading-4 text-[#a19e99] dark:text-[#7d7a75]">No text changes</p>
+    );
+  }
+  return (
+    <div>
+      {change.removed.map((line, index) => (
+        <p
+          key={`removed-${index}`}
+          className="truncate text-[12px] leading-4 text-[#7d7a75] dark:text-[#ada9a3]"
+        >
+          − {line}
+        </p>
+      ))}
+      {change.added.map((line, index) => (
+        <p
+          key={`added-${index}`}
+          className="truncate text-[12px] leading-4 text-[#7d7a75] dark:text-[#ada9a3]"
+        >
+          + {line}
+        </p>
+      ))}
+    </div>
   );
 }
 

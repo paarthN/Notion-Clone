@@ -47,15 +47,12 @@ export function DatabaseView({
   const create = useMutation(api.documents.create);
   const setProperties = useMutation(api.documents.setProperties);
   const setView = useMutation(api.documents.setView);
+  const setStatusFilter = useMutation(api.documents.setStatusFilter);
   const { members, loading } = useWorkspaceMembers();
   const database = pages.find((page) => page._id === databaseId);
   const view = database?.view ?? "table";
-  const [filter, setFilter] = useState<StatusFilter>("all");
-  const [filterFor, setFilterFor] = useState(databaseId);
-  if (filterFor !== databaseId) {
-    setFilterFor(databaseId);
-    setFilter("all");
-  }
+  const filter: StatusFilter = database?.statusFilter ?? "all";
+  const canChangeFilter = access !== undefined && access.level !== "view";
   const [creating, setCreating] = useState(false);
   const [over, setOver] = useState<RowStatus | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -90,6 +87,18 @@ export function DatabaseView({
     }
   };
 
+  const onFilter = async (next: StatusFilter) => {
+    if (!canChangeFilter || next === filter) return;
+    try {
+      await setStatusFilter({
+        id: databaseId,
+        status: next === "all" ? null : next,
+      });
+    } catch {
+      toast.error("Couldn't update the filter");
+    }
+  };
+
   const onCreate = async () => {
     setCreating(true);
     try {
@@ -118,24 +127,30 @@ export function DatabaseView({
       <div className="flex h-8 items-center gap-1 px-2">
         <ViewButton label="Table" active={view === "table"} canEdit={canEdit} onSelect={() => void onView("table")} />
         <ViewButton label="Board" active={view === "board"} canEdit={canEdit} onSelect={() => void onView("board")} />
-        <DropdownMenu>
-          <DropdownMenuTrigger className="inline-flex h-7 items-center rounded-md px-2 text-[14px] leading-none text-[#5f5e59] hover:bg-[rgba(33,27,23,0.05)] dark:text-[#bcbab6] dark:hover:bg-white/6">
-            {filter === "all" ? "Status" : STATUS_LABEL[filter]}
-            <ChevronDown className="ml-1 size-3" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-36">
-            <DropdownMenuItem onClick={() => setFilter("all")}>
-              <span className="flex-1">All</span>
-              {filter === "all" ? <Check className="size-3.5" /> : null}
-            </DropdownMenuItem>
-            {ROW_STATUSES.map((status) => (
-              <DropdownMenuItem key={status} onClick={() => setFilter(status)}>
-                <span className="flex-1">{STATUS_LABEL[status]}</span>
-                {filter === status ? <Check className="size-3.5" /> : null}
+        {canChangeFilter ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="inline-flex h-7 items-center rounded-md px-2 text-[14px] leading-none text-[#5f5e59] hover:bg-[rgba(33,27,23,0.05)] dark:text-[#bcbab6] dark:hover:bg-white/6">
+              {filter === "all" ? "Status" : STATUS_LABEL[filter]}
+              <ChevronDown className="ml-1 size-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-36">
+              <DropdownMenuItem onClick={() => void onFilter("all")}>
+                <span className="flex-1">All</span>
+                {filter === "all" ? <Check className="size-3.5" /> : null}
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {ROW_STATUSES.map((status) => (
+                <DropdownMenuItem key={status} onClick={() => void onFilter(status)}>
+                  <span className="flex-1">{STATUS_LABEL[status]}</span>
+                  {filter === status ? <Check className="size-3.5" /> : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <span className="inline-flex h-7 items-center px-2 text-[14px] leading-none text-[#5f5e59] dark:text-[#bcbab6]">
+            {filter === "all" ? "Status" : STATUS_LABEL[filter]}
+          </span>
+        )}
         {canEdit ? (
           <button
             type="button"
