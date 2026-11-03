@@ -43,7 +43,7 @@ export function DatabaseView({
 }) {
   const router = useRouter();
   const access = useQuery(api.documents.pageAccess, { id: databaseId });
-  const canEdit = access?.level !== "view";
+  const canEdit = access !== undefined && access.level !== "view";
   const create = useMutation(api.documents.create);
   const setProperties = useMutation(api.documents.setProperties);
   const setView = useMutation(api.documents.setView);

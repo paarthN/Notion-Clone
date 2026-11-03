@@ -2,10 +2,13 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
-import { components } from "./_generated/api";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { components, internal } from "./_generated/api";
 import { assertFullHolderRemains, requireAccess, resolveLevel } from "./lib/access";
+import { clerkUserInOrg } from "./lib/clerkMembership";
 import { requireOrg, type OrgContext } from "./lib/org";
+import { documentSearchText } from "./lib/searchText";
+import { deleteCommentsForDocument } from "./comments";
 import { prosemirrorSync } from "./prosemirror";
 
 const EMPTY_DOC = { type: "doc", content: [] };
@@ -21,6 +24,9 @@ const rowStatus = v.union(
 );
 const databaseView = v.union(v.literal("table"), v.literal("board"));
 const PRESENCE_TTL_MS = 30_000;
+const TREE_LIMIT = 2_000;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 export const session = query({
   args: {},
@@ -61,31 +67,43 @@ export const listTrash = query({
   },
 });
 
+export const backfillSearchText = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const { orgId } = await requireOrg(ctx);
+    const docs = await ctx.db
+      .query("documents")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .collect();
+    for (const doc of docs) {
+      if (doc.searchText !== undefined) continue;
+      await ctx.db.patch("documents", doc._id, {
+        searchText: documentSearchText(doc.title, doc.plainText ?? ""),
+      });
+    }
+  },
+});
+
 export const search = query({
   args: { query: v.string() },
   handler: async (ctx, args) => {
-    const needle = args.query.trim().toLowerCase();
+    const needle = args.query.trim();
     if (!needle) {
       return [];
     }
     const actor = await requireOrg(ctx);
     const docs = await ctx.db
       .query("documents")
-      .withIndex("by_org", (q) => q.eq("orgId", actor.orgId))
-      .collect();
+      .withSearchIndex("search_documents", (q) =>
+        q.search("searchText", needle).eq("orgId", actor.orgId).eq("isArchived", false),
+      )
+      .take(50);
     const visible = await filterVisible(ctx, docs, actor);
-    const hits = visible.filter((doc) => {
-      if (doc.isArchived) {
-        return false;
-      }
-      return (
-        doc.title.toLowerCase().includes(needle) ||
-        (doc.plainText ?? "").toLowerCase().includes(needle)
-      );
-    });
+    const lowered = needle.toLowerCase();
+    const hits = visible.filter((doc) => !doc.isArchived);
     hits.sort((a, b) => {
-      const aTitle = a.title.toLowerCase().includes(needle) ? 0 : 1;
-      const bTitle = b.title.toLowerCase().includes(needle) ? 0 : 1;
+      const aTitle = a.title.toLowerCase().includes(lowered) ? 0 : 1;
+      const bTitle = b.title.toLowerCase().includes(lowered) ? 0 : 1;
       if (aTitle !== bTitle) {
         return aTitle - bTitle;
       }
@@ -93,7 +111,7 @@ export const search = query({
     });
     return hits.slice(0, 20).map((doc) => ({
       ...withKind(doc),
-      snippet: matchSnippet(doc.plainText ?? "", needle),
+      snippet: matchSnippet(doc.plainText ?? "", lowered),
     }));
   },
 });
@@ -120,6 +138,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const { orgId, userId } = await requireOrg(ctx);
     const kind = args.kind ?? "page";
+    const title = args.title?.trim() || "Untitled";
     let generalAccess: "edit" | "view" | "none" | undefined;
     let accessBeforePrivate: "edit" | "view" | undefined;
     if (args.parentId) {
@@ -143,7 +162,7 @@ export const create = mutation({
     const id = await ctx.db.insert("documents", {
       orgId,
       parentId: args.parentId,
-      title: args.title?.trim() || "Untitled",
+      title,
       icon: null,
       coverUrl: null,
       isArchived: false,
@@ -152,6 +171,7 @@ export const create = mutation({
       updatedAt: Date.now(),
       kind,
       plainText: "",
+      searchText: documentSearchText(title, ""),
       ...(generalAccess ? { generalAccess } : {}),
       ...(accessBeforePrivate ? { accessBeforePrivate } : {}),
       ...(kind === "database" && args.view ? { view: args.view } : {}),
@@ -162,6 +182,7 @@ export const create = mutation({
       documentId: id,
       userId,
       level: "full",
+      trusted: true,
     });
 
     if (kind === "page") {
@@ -174,9 +195,11 @@ export const create = mutation({
 export const rename = mutation({
   args: { id: v.id("documents"), title: v.string() },
   handler: async (ctx, args) => {
-    await requireAccess(ctx, args.id, "edit");
+    const { doc } = await requireAccess(ctx, args.id, "edit");
+    const title = args.title.trim() || "Untitled";
     await ctx.db.patch("documents", args.id, {
-      title: args.title.trim() || "Untitled",
+      title,
+      searchText: documentSearchText(title, doc.plainText ?? ""),
       updatedAt: Date.now(),
     });
   },
@@ -201,15 +224,51 @@ export const generateUploadUrl = mutation({
   },
 });
 
-export const storageUrl = mutation({
+export const storageUrl = action({
+  args: { storageId: v.id("_storage"), documentId: v.id("documents") },
+  handler: async (ctx, args) => {
+    const metadata = await ctx.storage.getMetadata(args.storageId);
+    if (!metadata) {
+      throw new Error("Uploaded file is missing");
+    }
+    const problem = imageProblem(metadata);
+    if (problem) {
+      await ctx.runMutation(internal.documents.discardUpload, {
+        storageId: args.storageId,
+      });
+      throw new Error(problem);
+    }
+    return await ctx.runMutation(internal.documents.claimUpload, {
+      storageId: args.storageId,
+      documentId: args.documentId,
+    });
+  },
+});
+
+export const discardUpload = internalMutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, args) => {
     await requireOrg(ctx);
-    const url = await ctx.storage.getUrl(args.storageId);
-    if (!url) {
-      throw new Error("Uploaded file is missing");
+    const existing = await ctx.db
+      .query("files")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .unique();
+    if (existing) {
+      return;
     }
-    return url;
+    const metadata = await ctx.storage.getMetadata(args.storageId);
+    if (!metadata) {
+      return;
+    }
+    await ctx.storage.delete(args.storageId);
+  },
+});
+
+export const claimUpload = internalMutation({
+  args: { storageId: v.id("_storage"), documentId: v.id("documents") },
+  handler: async (ctx, args) => {
+    const actor = await requireAccess(ctx, args.documentId, "edit");
+    return await claimImage(ctx, actor.orgId, args.documentId, args.storageId);
   },
 });
 
@@ -219,12 +278,19 @@ export const setCover = mutation({
     storageId: v.union(v.id("_storage"), v.null()),
   },
   handler: async (ctx, args) => {
-    await requireAccess(ctx, args.id, "edit");
-    const coverUrl = args.storageId
-      ? await ctx.storage.getUrl(args.storageId)
-      : null;
+    const actor = await requireAccess(ctx, args.id, "edit");
+    if (!args.storageId) {
+      await ctx.db.patch("documents", args.id, {
+        coverUrl: null,
+        coverStorageId: undefined,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+    const coverUrl = await claimImage(ctx, actor.orgId, args.id, args.storageId);
     await ctx.db.patch("documents", args.id, {
       coverUrl,
+      coverStorageId: args.storageId,
       updatedAt: Date.now(),
     });
   },
@@ -333,22 +399,16 @@ export const move = mutation({
     index: v.number(),
   },
   handler: async (ctx, args) => {
-    const { orgId } = await requireAccess(ctx, args.id, "full");
-    const moving = await ctx.db.get("documents", args.id);
-    if (!moving || moving.orgId !== orgId || moving.isArchived) {
+    const { orgId, doc: moving } = await requireAccess(ctx, args.id, "full");
+    if (moving.orgId !== orgId || moving.isArchived) {
       throw new Error("Page not found");
     }
     if (args.parentId) {
-      const parent = await ctx.db.get("documents", args.parentId);
-      if (!parent || parent.orgId !== orgId) {
-        throw new Error("Destination not found");
-      }
-      if (parent.isArchived) {
+      const parent = await requireAccess(ctx, args.parentId, "edit");
+      if (parent.doc.isArchived) {
         throw new Error("Archived pages cannot be drop targets");
       }
-      if (await isInside(ctx, orgId, args.id, args.parentId)) {
-        throw new Error("Cannot move a page into itself");
-      }
+      await assertMoveIsSafe(ctx, orgId, args.id, args.parentId);
     }
 
     const index = Number.isFinite(args.index) ? Math.floor(args.index) : 0;
@@ -363,7 +423,7 @@ export const duplicate = mutation({
   args: { id: v.id("documents") },
   handler: async (ctx, args) => {
     const actor = await requireAccess(ctx, args.id, "full");
-    const { orgId, userId } = actor;
+    const { orgId } = actor;
     const source = actor.doc;
     if (!source || source.orgId !== orgId || source.isArchived) {
       throw new Error("Page not found");
@@ -385,43 +445,51 @@ export const duplicate = mutation({
       .collect();
     const position =
       siblings.reduce((max, doc) => Math.max(max, doc.position), -1) + 1;
-    const kind = source.kind ?? "page";
-    const id = await ctx.db.insert("documents", {
-      orgId,
+    const rootId = await copyDocument(
+      ctx,
+      actor,
+      source,
       parentId,
-      title: `Copy of ${source.title.trim() || "Untitled"}`,
-      icon: source.icon,
-      coverUrl: source.coverUrl,
-      isArchived: false,
+      `Copy of ${source.title.trim() || "Untitled"}`,
       position,
-      createdBy: userId,
-      updatedAt: Date.now(),
-      kind,
-      plainText: source.plainText ?? "",
-      ...(source.generalAccess ? { generalAccess: source.generalAccess } : {}),
-      ...(source.accessBeforePrivate
-        ? { accessBeforePrivate: source.accessBeforePrivate }
-        : {}),
-      ...(source.status ? { status: source.status } : {}),
-      ...(source.dueAt !== undefined ? { dueAt: source.dueAt } : {}),
-      ...(source.personId ? { personId: source.personId } : {}),
-      ...(source.view ? { view: source.view } : {}),
-    });
+    );
 
-    await ctx.db.insert("access", {
-      orgId,
-      documentId: id,
-      userId,
-      level: "full",
-    });
-
-    if (kind === "page") {
-      const snapshot = await ctx.runQuery(components.prosemirrorSync.lib.getSnapshot, {
-        id: source._id,
-      });
-      await prosemirrorSync.create(ctx, id, snapshotContent(snapshot.content));
+    const queue: { sourceId: Id<"documents">; copyId: Id<"documents"> }[] = [
+      { sourceId: source._id, copyId: rootId },
+    ];
+    const seen = new Set<string>([source._id]);
+    let copied = 1;
+    while (queue.length > 0) {
+      const job = queue.shift();
+      if (!job) break;
+      const children = await ctx.db
+        .query("documents")
+        .withIndex("by_org_parent", (q) =>
+          q.eq("orgId", orgId).eq("parentId", job.sourceId),
+        )
+        .collect();
+      const active = children.filter((child) => !child.isArchived).sort(byPosition);
+      for (const child of active) {
+        if (seen.has(child._id)) {
+          throw new Error("Couldn't duplicate this page");
+        }
+        seen.add(child._id);
+        copied += 1;
+        if (copied > TREE_LIMIT) {
+          throw new Error("This page is too large to duplicate");
+        }
+        const copyId = await copyDocument(
+          ctx,
+          actor,
+          child,
+          job.copyId,
+          child.title,
+          child.position,
+        );
+        queue.push({ sourceId: child._id, copyId });
+      }
     }
-    return id;
+    return rootId;
   },
 });
 
@@ -615,12 +683,68 @@ export const pageAccess = query({
   },
 });
 
-export const setAccess = mutation({
+export const hasAccessGrant = internalQuery({
+  args: { id: v.id("documents"), userId: v.string() },
+  handler: async (ctx, args) => {
+    const actor = await requireOrg(ctx);
+    const row = await ctx.db
+      .query("access")
+      .withIndex("by_document_user", (q) =>
+        q.eq("documentId", args.id).eq("userId", args.userId),
+      )
+      .unique();
+    return Boolean(row && row.orgId === actor.orgId);
+  },
+});
+
+export const setAccess = action({
   args: {
     id: v.id("documents"),
     generalAccess: v.optional(workspaceAccess),
     userId: v.optional(v.string()),
     level: v.optional(v.union(accessLevel, v.null())),
+  },
+  handler: async (ctx, args) => {
+    let userId = args.userId;
+    let membershipVerified = false;
+    if (args.userId !== undefined) {
+      userId = args.userId.trim();
+      if (!userId) {
+        throw new Error("Missing member");
+      }
+      if (userId.length > 256) {
+        throw new Error("Invalid member");
+      }
+      const actor = await requireOrg(ctx);
+      const existing = await ctx.runQuery(internal.documents.hasAccessGrant, {
+        id: args.id,
+        userId,
+      });
+      if (!existing) {
+        const member = await clerkUserInOrg(actor.orgId, userId);
+        if (member === false) {
+          throw new Error("That person is not in this workspace");
+        }
+        membershipVerified = member === true;
+      }
+    }
+    await ctx.runMutation(internal.documents.applyAccess, {
+      id: args.id,
+      generalAccess: args.generalAccess,
+      userId,
+      level: args.level,
+      membershipVerified,
+    });
+  },
+});
+
+export const applyAccess = internalMutation({
+  args: {
+    id: v.id("documents"),
+    generalAccess: v.optional(workspaceAccess),
+    userId: v.optional(v.string()),
+    level: v.optional(v.union(accessLevel, v.null())),
+    membershipVerified: v.boolean(),
   },
   handler: async (ctx, args) => {
     if (args.generalAccess === undefined && args.userId === undefined) {
@@ -652,17 +776,23 @@ export const setAccess = mutation({
     if (!userId) {
       throw new Error("Missing member");
     }
+    if (userId.length > 256) {
+      throw new Error("Invalid member");
+    }
     if (args.level === undefined) {
       throw new Error("Missing access level");
     }
     const level = args.level === null ? "none" : args.level;
-    const existing = await ctx.db
+    const prior = await ctx.db
       .query("access")
-      .withIndex("by_document_user", (q) =>
-        q.eq("documentId", args.id).eq("userId", userId),
-      )
-      .unique();
-    if (existing && existing.orgId !== actor.orgId) {
+      .withIndex("by_document", (q) => q.eq("documentId", args.id))
+      .collect();
+    const priorUserIds = new Set(
+      prior.filter((row) => row.orgId === actor.orgId).map((row) => row.userId),
+    );
+    const existing = prior.find((row) => row.userId === userId && row.orgId === actor.orgId);
+    const foreign = prior.find((row) => row.userId === userId && row.orgId !== actor.orgId);
+    if (foreign) {
       throw new Error("Page not found");
     }
     if (existing) {
@@ -673,13 +803,14 @@ export const setAccess = mutation({
         documentId: args.id,
         userId,
         level,
+        trusted: args.membershipVerified,
       });
     }
     const doc = await ctx.db.get("documents", args.id);
     if (!doc || doc.orgId !== actor.orgId) {
       throw new Error("Page not found");
     }
-    await assertFullHolderRemains(ctx, doc, actor);
+    await assertFullHolderRemains(ctx, doc, actor, priorUserIds);
   },
 });
 
@@ -711,8 +842,20 @@ function newShareToken() {
 }
 
 function withKind(doc: Doc<"documents">) {
-  const { plainText, status, dueAt, personId, view, shareToken, ...rest } = doc;
+  const {
+    plainText,
+    searchText,
+    coverStorageId,
+    status,
+    dueAt,
+    personId,
+    view,
+    shareToken,
+    ...rest
+  } = doc;
   void plainText;
+  void searchText;
+  void coverStorageId;
   void shareToken;
   return {
     ...rest,
@@ -830,24 +973,37 @@ function readOffset(value: number) {
 async function setArchived(
   ctx: MutationCtx,
   orgId: string,
-  id: Id<"documents">,
+  rootId: Id<"documents">,
   isArchived: boolean,
-  depth = 0,
 ) {
-  if (depth > 20) {
-    return;
-  }
-  await ctx.db.patch("documents", id, { isArchived, updatedAt: Date.now() });
-  const children = await ctx.db
-    .query("documents")
-    .withIndex("by_org_parent", (q) => q.eq("orgId", orgId).eq("parentId", id))
-    .collect();
-  for (const child of children) {
-    await setArchived(ctx, orgId, child._id, isArchived, depth + 1);
+  const stack: Id<"documents">[] = [rootId];
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (!id) break;
+    if (seen.has(id)) {
+      throw new Error("Couldn't archive this page");
+    }
+    seen.add(id);
+    if (seen.size > TREE_LIMIT) {
+      throw new Error("This page is too large to archive");
+    }
+    const doc = await ctx.db.get("documents", id);
+    if (!doc || doc.orgId !== orgId) {
+      continue;
+    }
+    await ctx.db.patch("documents", id, { isArchived, updatedAt: Date.now() });
+    const children = await ctx.db
+      .query("documents")
+      .withIndex("by_org_parent", (q) => q.eq("orgId", orgId).eq("parentId", id))
+      .collect();
+    for (const child of children) {
+      stack.push(child._id);
+    }
   }
 }
 
-async function isInside(
+async function assertMoveIsSafe(
   ctx: QueryCtx | MutationCtx,
   orgId: string,
   ancestorId: Id<"documents">,
@@ -855,21 +1011,22 @@ async function isInside(
 ) {
   let current: Id<"documents"> | null = nodeId;
   const seen = new Set<string>();
-  for (let depth = 0; depth < 25 && current; depth += 1) {
-    if (seen.has(current)) {
-      return false;
+  let walked = 0;
+  while (current) {
+    if (seen.has(current) || walked >= TREE_LIMIT) {
+      throw new Error("Cannot move a page into itself");
     }
     seen.add(current);
+    walked += 1;
     if (current === ancestorId) {
-      return true;
+      throw new Error("Cannot move a page into itself");
     }
     const doc: Doc<"documents"> | null = await ctx.db.get("documents", current);
     if (!doc || doc.orgId !== orgId) {
-      return false;
+      throw new Error("Destination not found");
     }
     current = doc.parentId;
   }
-  return false;
 }
 
 function byPosition(a: Doc<"documents">, b: Doc<"documents">) {
@@ -941,52 +1098,179 @@ function snapshotContent(raw: string | null) {
 async function deleteDocumentTree(
   ctx: MutationCtx,
   orgId: string,
-  id: Id<"documents">,
-  depth = 0,
+  rootId: Id<"documents">,
 ) {
-  if (depth > 25) {
-    return;
-  }
-  const doc = await ctx.db.get("documents", id);
-  if (!doc || doc.orgId !== orgId) {
-    return;
-  }
-  const children = await ctx.db
-    .query("documents")
-    .withIndex("by_org_parent", (q) => q.eq("orgId", orgId).eq("parentId", id))
-    .collect();
-  for (const child of children) {
-    await deleteDocumentTree(ctx, orgId, child._id, depth + 1);
-  }
-
-  const favorites = await ctx.db
-    .query("favorites")
-    .withIndex("by_document", (q) => q.eq("documentId", id))
-    .collect();
-  for (const row of favorites) {
-    if (row.orgId === orgId) {
-      await ctx.db.delete("favorites", row._id);
+  const order: Id<"documents">[] = [];
+  const stack: Id<"documents">[] = [rootId];
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (!id) break;
+    if (seen.has(id)) {
+      throw new Error("Couldn't delete this page");
+    }
+    seen.add(id);
+    if (seen.size > TREE_LIMIT) {
+      throw new Error("This page is too large to delete");
+    }
+    const doc = await ctx.db.get("documents", id);
+    if (!doc || doc.orgId !== orgId) {
+      continue;
+    }
+    order.push(id);
+    const children = await ctx.db
+      .query("documents")
+      .withIndex("by_org_parent", (q) => q.eq("orgId", orgId).eq("parentId", id))
+      .collect();
+    for (const child of children) {
+      stack.push(child._id);
     }
   }
 
-  const presence = await ctx.db
-    .query("presence")
-    .withIndex("by_document", (q) => q.eq("documentId", id))
-    .collect();
-  for (const row of presence) {
-    await ctx.db.delete("presence", row._id);
-  }
+  for (const id of order.reverse()) {
+    const doc = await ctx.db.get("documents", id);
+    if (!doc || doc.orgId !== orgId) {
+      continue;
+    }
+    await deleteCommentsForDocument(ctx, orgId, id);
 
-  const grants = await ctx.db
-    .query("access")
-    .withIndex("by_document", (q) => q.eq("documentId", id))
-    .collect();
-  for (const row of grants) {
-    await ctx.db.delete("access", row._id);
-  }
+    const favorites = await ctx.db
+      .query("favorites")
+      .withIndex("by_document", (q) => q.eq("documentId", id))
+      .collect();
+    for (const row of favorites) {
+      if (row.orgId === orgId) {
+        await ctx.db.delete("favorites", row._id);
+      }
+    }
 
-  if ((doc.kind ?? "page") === "page") {
-    await ctx.runMutation(components.prosemirrorSync.lib.deleteDocument, { id });
+    const presence = await ctx.db
+      .query("presence")
+      .withIndex("by_document", (q) => q.eq("documentId", id))
+      .collect();
+    for (const row of presence) {
+      await ctx.db.delete("presence", row._id);
+    }
+
+    const grants = await ctx.db
+      .query("access")
+      .withIndex("by_document", (q) => q.eq("documentId", id))
+      .collect();
+    for (const row of grants) {
+      await ctx.db.delete("access", row._id);
+    }
+
+    if (doc.coverStorageId) {
+      const metadata = await ctx.storage.getMetadata(doc.coverStorageId);
+      if (metadata) {
+        await ctx.storage.delete(doc.coverStorageId);
+      }
+      const claim = await ctx.db
+        .query("files")
+        .withIndex("by_storage", (q) => q.eq("storageId", doc.coverStorageId))
+        .unique();
+      if (claim) {
+        await ctx.db.delete("files", claim._id);
+      }
+    }
+
+    if ((doc.kind ?? "page") === "page") {
+      await ctx.runMutation(components.prosemirrorSync.lib.deleteDocument, { id });
+    }
+    await ctx.db.delete("documents", id);
   }
-  await ctx.db.delete("documents", id);
+}
+
+async function copyDocument(
+  ctx: MutationCtx,
+  actor: OrgContext & { doc: Doc<"documents">; level: string },
+  source: Doc<"documents">,
+  parentId: Id<"documents"> | null,
+  title: string,
+  position: number,
+) {
+  const kind = source.kind ?? "page";
+  const plainText = source.plainText ?? "";
+  const id = await ctx.db.insert("documents", {
+    orgId: actor.orgId,
+    parentId,
+    title,
+    icon: source.icon,
+    coverUrl: source.coverUrl,
+    isArchived: false,
+    position,
+    createdBy: actor.userId,
+    updatedAt: Date.now(),
+    kind,
+    plainText,
+    searchText: documentSearchText(title, plainText),
+    ...(source.generalAccess ? { generalAccess: source.generalAccess } : {}),
+    ...(source.accessBeforePrivate
+      ? { accessBeforePrivate: source.accessBeforePrivate }
+      : {}),
+    ...(source.status ? { status: source.status } : {}),
+    ...(source.dueAt !== undefined ? { dueAt: source.dueAt } : {}),
+    ...(source.personId ? { personId: source.personId } : {}),
+    ...(source.view ? { view: source.view } : {}),
+    ...(source.statusFilter ? { statusFilter: source.statusFilter } : {}),
+  });
+
+  await ctx.db.insert("access", {
+    orgId: actor.orgId,
+    documentId: id,
+    userId: actor.userId,
+    level: "full",
+    trusted: true,
+  });
+
+  if (kind === "page") {
+    const snapshot = await ctx.runQuery(components.prosemirrorSync.lib.getSnapshot, {
+      id: source._id,
+    });
+    await prosemirrorSync.create(ctx, id, snapshotContent(snapshot.content));
+  }
+  return id;
+}
+
+function imageProblem(metadata: { size: number; contentType: string | null }) {
+  if (metadata.size > MAX_IMAGE_BYTES) {
+    return "Image must be 5 MB or smaller";
+  }
+  const contentType = metadata.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!IMAGE_TYPES.has(contentType)) {
+    return "Only PNG, JPEG, GIF, and WebP images can be uploaded";
+  }
+  return null;
+}
+
+async function claimImage(
+  ctx: MutationCtx,
+  orgId: string,
+  documentId: Id<"documents">,
+  storageId: Id<"_storage">,
+) {
+  const metadata = await ctx.storage.getMetadata(storageId);
+  if (!metadata) {
+    throw new Error("Uploaded file is missing");
+  }
+  const existing = await ctx.db
+    .query("files")
+    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
+    .unique();
+  if (existing) {
+    if (existing.orgId !== orgId || existing.documentId !== documentId) {
+      throw new Error("Uploaded file is missing");
+    }
+  } else {
+    const problem = imageProblem(metadata);
+    if (problem) {
+      throw new Error(problem);
+    }
+    await ctx.db.insert("files", { orgId, documentId, storageId });
+  }
+  const url = await ctx.storage.getUrl(storageId);
+  if (!url) {
+    throw new Error("Uploaded file is missing");
+  }
+  return url;
 }

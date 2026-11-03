@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { Check, ChevronDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,7 +18,7 @@ export function Breadcrumbs({
 }) {
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });
-  const setAccess = useMutation(api.documents.setAccess);
+  const setAccess = useAction(api.documents.setAccess);
   const page = pages?.find((item) => item._id === documentId);
   const general =
     access?.generalAccess ??

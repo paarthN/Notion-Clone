@@ -61,6 +61,7 @@ export async function assertFullHolderRemains(
   ctx: MutationCtx,
   doc: Doc<"documents">,
   actor: OrgContext,
+  priorUserIds: ReadonlySet<string>,
 ) {
   const rows = await ctx.db
     .query("access")
@@ -73,7 +74,7 @@ export async function assertFullHolderRemains(
       continue;
     }
     covered.add(row.userId);
-    if (row.level === "full") {
+    if (row.level === "full" && countsAsFullHolder(row, doc, actor, priorUserIds)) {
       holders.add(row.userId);
     }
   }
@@ -86,4 +87,25 @@ export async function assertFullHolderRemains(
   if (holders.size === 0) {
     throw new Error("The last person with full access can't be removed");
   }
+}
+
+function countsAsFullHolder(
+  row: Doc<"access">,
+  doc: Doc<"documents">,
+  actor: OrgContext,
+  priorUserIds: ReadonlySet<string>,
+) {
+  if (row.userId === doc.createdBy) {
+    return true;
+  }
+  if (actor.role === "admin" && row.userId === actor.userId) {
+    return true;
+  }
+  if (row.trusted === true) {
+    return true;
+  }
+  if (row.trusted === false) {
+    return false;
+  }
+  return priorUserIds.has(row.userId);
 }

@@ -5,7 +5,7 @@ import type { SyncApi } from "@convex-dev/prosemirror-sync";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { en } from "@blocknote/core/locales";
 import { BlockNoteView } from "@blocknote/mantine";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef } from "react";
 
@@ -36,16 +36,16 @@ const dictionary = {
 export function CollaborativeEditor({ documentId }: { documentId: string }) {
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });
-  const canEdit = access?.level !== "view";
-  const canWrite = access !== undefined && access.level !== "view";
+  const canEdit = access !== undefined && access.level !== "view";
+  const canWrite = canEdit;
   const threadStore = useConvexThreadStore(id, canWrite);
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
-  const storageUrl = useMutation(api.documents.storageUrl);
+  const storageUrl = useAction(api.documents.storageUrl);
   const uploadFileRef = useRef<(file: File) => Promise<string>>(async () => {
     throw new Error("Upload is not ready");
   });
   uploadFileRef.current = (file) =>
-    uploadInlineFile(file, generateUploadUrl, storageUrl);
+    uploadInlineFile(file, id, generateUploadUrl, storageUrl);
 
   const reportSyncError = useRef<(error: Error) => void>(() => {
     setSavePhase(documentId, "error");
@@ -112,8 +112,12 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
 
 async function uploadInlineFile(
   file: File,
+  documentId: Id<"documents">,
   generateUploadUrl: () => Promise<string>,
-  storageUrl: (args: { storageId: Id<"_storage"> }) => Promise<string>,
+  storageUrl: (args: {
+    storageId: Id<"_storage">;
+    documentId: Id<"documents">;
+  }) => Promise<string>,
 ) {
   const uploadUrl = await generateUploadUrl();
   const result = await fetch(uploadUrl, {
@@ -125,5 +129,5 @@ async function uploadInlineFile(
   if (!body.storageId) {
     throw new Error("Upload failed");
   }
-  return storageUrl({ storageId: body.storageId });
+  return storageUrl({ storageId: body.storageId, documentId });
 }

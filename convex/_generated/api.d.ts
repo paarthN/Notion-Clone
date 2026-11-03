@@ -11,9 +11,11 @@
 import type * as comments from "../comments.js";
 import type * as documents from "../documents.js";
 import type * as lib_access from "../lib/access.js";
+import type * as lib_clerkMembership from "../lib/clerkMembership.js";
 import type * as lib_org from "../lib/org.js";
 import type * as lib_plaintext from "../lib/plaintext.js";
 import type * as lib_pmSchema from "../lib/pmSchema.js";
+import type * as lib_searchText from "../lib/searchText.js";
 import type * as prosemirror from "../prosemirror.js";
 
 import type {
@@ -26,9 +28,11 @@ declare const fullApi: ApiFromModules<{
   comments: typeof comments;
   documents: typeof documents;
   "lib/access": typeof lib_access;
+  "lib/clerkMembership": typeof lib_clerkMembership;
   "lib/org": typeof lib_org;
   "lib/plaintext": typeof lib_plaintext;
   "lib/pmSchema": typeof lib_pmSchema;
+  "lib/searchText": typeof lib_searchText;
   prosemirror: typeof prosemirror;
 }>;
 

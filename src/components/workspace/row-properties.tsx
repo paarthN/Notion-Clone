@@ -74,7 +74,7 @@ export function formatDue(dueAt: number | undefined) {
 
 export function RowProperties({ page }: { page: PageDoc }) {
   const access = useQuery(api.documents.pageAccess, { id: page._id });
-  const canEdit = access?.level !== "view";
+  const canEdit = access !== undefined && access.level !== "view";
   const setProperties = useMutation(api.documents.setProperties);
   const { members, loading } = useWorkspaceMembers();
 

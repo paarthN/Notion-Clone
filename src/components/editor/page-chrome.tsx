@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { ImagePlus, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -29,11 +29,12 @@ export function PageChrome({
   const pages = useQuery(api.documents.list) as PageDoc[] | undefined;
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });
-  const canEdit = access?.level !== "view";
+  const canEdit = access !== undefined && access.level !== "view";
   const page = pages?.find((item) => item._id === id);
   const setIcon = useMutation(api.documents.setIcon);
   const setCover = useMutation(api.documents.setCover);
   const generateUploadUrl = useMutation(api.documents.generateUploadUrl);
+  const storageUrl = useAction(api.documents.storageUrl);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [iconOpen, setIconOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -167,7 +168,7 @@ export function PageChrome({
         {page.kind === "page" ? null : (
           <PageAnchorMargin
             documentId={id}
-            canWrite={access !== undefined && access.level !== "view"}
+            canWrite={canEdit}
           />
         )}
         {children}
@@ -184,7 +185,7 @@ export function PageChrome({
           event.target.value = "";
           if (!file) return;
           setUploading(true);
-          void uploadCover(file, generateUploadUrl, setCover, id)
+          void uploadCover(file, generateUploadUrl, storageUrl, setCover, id)
             .catch(() => toast.error("Could not upload cover image"))
             .finally(() => setUploading(false));
         }}
@@ -367,6 +368,10 @@ function PageTitle({ id, title }: { id: Id<"documents">; title: string }) {
 async function uploadCover(
   file: File,
   generateUploadUrl: () => Promise<string>,
+  storageUrl: (args: {
+    storageId: Id<"_storage">;
+    documentId: Id<"documents">;
+  }) => Promise<string>,
   setCover: (args: {
     id: Id<"documents">;
     storageId: Id<"_storage">;
@@ -383,5 +388,6 @@ async function uploadCover(
   if (!body.storageId) {
     throw new Error("Upload failed");
   }
+  await storageUrl({ storageId: body.storageId, documentId });
   await setCover({ id: documentId, storageId: body.storageId });
 }

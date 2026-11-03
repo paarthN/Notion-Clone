@@ -30,11 +30,17 @@ export default defineSchema({
     statusFilter: v.optional(
       v.union(v.literal("not_started"), v.literal("in_progress"), v.literal("done")),
     ),
+    coverStorageId: v.optional(v.id("_storage")),
+    searchText: v.optional(v.string()),
   })
     .index("by_org", ["orgId"])
     .index("by_org_parent", ["orgId", "parentId"])
     .index("by_org_archived", ["orgId", "isArchived"])
-    .index("by_share_token", ["shareToken"]),
+    .index("by_share_token", ["shareToken"])
+    .searchIndex("search_documents", {
+      searchField: "searchText",
+      filterFields: ["orgId", "isArchived"],
+    }),
 
   favorites: defineTable({
     orgId: v.string(),
@@ -67,9 +73,18 @@ export default defineSchema({
       v.literal("view"),
       v.literal("none"),
     ),
+    trusted: v.optional(v.boolean()),
   })
     .index("by_document", ["documentId"])
     .index("by_document_user", ["documentId", "userId"]),
+
+  files: defineTable({
+    orgId: v.string(),
+    documentId: v.id("documents"),
+    storageId: v.id("_storage"),
+  })
+    .index("by_storage", ["storageId"])
+    .index("by_document", ["documentId"]),
 
   comments: defineTable({
     orgId: v.string(),
@@ -106,5 +121,18 @@ export default defineSchema({
     orgId: v.string(),
     userId: v.string(),
     commentId: v.id("comments"),
-  }).index("by_org_user_comment", ["orgId", "userId", "commentId"]),
+  })
+    .index("by_org_user_comment", ["orgId", "userId", "commentId"])
+    .index("by_comment", ["commentId"]),
+
+  commentMentions: defineTable({
+    orgId: v.string(),
+    userId: v.string(),
+    commentId: v.id("comments"),
+    documentId: v.id("documents"),
+    authorId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_org_user", ["orgId", "userId"])
+    .index("by_comment", ["commentId"]),
 });

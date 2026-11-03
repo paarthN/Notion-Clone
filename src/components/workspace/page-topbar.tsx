@@ -1,7 +1,7 @@
 "use client";
 
 import { useClerk, UserButton, useOrganization, useUser } from "@clerk/nextjs";
-import { useConvexConnectionState, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexConnectionState, useMutation, useQuery } from "convex/react";
 import { Check, ChevronDown, Copy, FolderInput, Link, Lock, MoreHorizontal, Star } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -163,7 +163,7 @@ export function PageActions({
   const archive = useMutation(api.documents.archive);
   const duplicate = useMutation(api.documents.duplicate);
   const move = useMutation(api.documents.move);
-  const setAccess = useMutation(api.documents.setAccess);
+  const setAccess = useAction(api.documents.setAccess);
   const setShareLink = useMutation(api.documents.setShareLink);
   const id = documentId as Id<"documents">;
   const access = useQuery(api.documents.pageAccess, { id });

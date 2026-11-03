@@ -1,10 +1,27 @@
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import componentSchema from "./components/prosemirrorSync/schema";
+import { documentSearchText } from "./lib/searchText";
 import schema from "./schema";
 import { modules, prosemirrorModules } from "./test.setup";
+
+let savedClerkKey: string | undefined;
+
+beforeEach(() => {
+  savedClerkKey = process.env.CLERK_SECRET_KEY;
+  delete process.env.CLERK_SECRET_KEY;
+});
+
+afterEach(() => {
+  if (savedClerkKey === undefined) {
+    delete process.env.CLERK_SECRET_KEY;
+  } else {
+    process.env.CLERK_SECRET_KEY = savedClerkKey;
+  }
+});
 
 const ORG = "org_acme";
 const CREATOR = "user_creator";
@@ -39,20 +56,24 @@ async function insertPage(
     generalAccess?: "edit" | "view" | "none";
     shareToken?: string;
     plainText?: string;
+    parentId?: Id<"documents"> | null;
   } = {},
 ) {
+  const title = fields.title ?? "Notes";
+  const plainText = fields.plainText ?? "";
   return await t.run(async (ctx) => {
     return await ctx.db.insert("documents", {
       orgId: fields.orgId ?? ORG,
-      parentId: null,
-      title: fields.title ?? "Notes",
+      parentId: fields.parentId ?? null,
+      title,
       icon: null,
       coverUrl: null,
       isArchived: false,
       position: 0,
       createdBy: fields.createdBy ?? CREATOR,
       updatedAt: 1,
-      plainText: fields.plainText ?? "",
+      plainText,
+      searchText: documentSearchText(title, plainText),
       ...(fields.generalAccess ? { generalAccess: fields.generalAccess } : {}),
       ...(fields.shareToken ? { shareToken: fields.shareToken } : {}),
     });
@@ -76,7 +97,7 @@ test("no access sticks for edit, list, and search", async () => {
   const creator = asUser(t, CREATOR);
   const member = asUser(t, MEMBER);
 
-  await creator.mutation(api.documents.setAccess, {
+  await creator.action(api.documents.setAccess, {
     id,
     userId: MEMBER,
     level: "none",
@@ -175,6 +196,121 @@ test("restore throws when the save is missing and the caller can edit", async ()
   await expect(member.mutation(api.prosemirror.restore, { id, version: 3 })).rejects.toThrow(
     "Save not found",
   );
+});
+
+test("fake or empty user id rejected", async () => {
+  const t = potionTest();
+  const id = await insertPage(t, { title: "Owned" });
+  const creator = asUser(t, CREATOR);
+
+  await expect(
+    creator.action(api.documents.setAccess, { id, userId: " ", level: "full" }),
+  ).rejects.toThrow("Missing member");
+  await expect(
+    creator.action(api.documents.setAccess, {
+      id,
+      userId: "u".repeat(257),
+      level: "full",
+    }),
+  ).rejects.toThrow("Invalid member");
+
+  await creator.action(api.documents.setAccess, {
+    id,
+    userId: "user_fake",
+    level: "full",
+  });
+  await expect(
+    creator.action(api.documents.setAccess, { id, userId: CREATOR, level: "none" }),
+  ).rejects.toThrow("The last person with full access can't be removed");
+});
+
+test("a fake user is rejected when Clerk can check membership", async () => {
+  process.env.CLERK_SECRET_KEY = "test-clerk-key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 404 });
+  try {
+    const t = potionTest();
+    const id = await insertPage(t, { title: "Owned" });
+    const creator = asUser(t, CREATOR);
+    await expect(
+      creator.action(api.documents.setAccess, {
+        id,
+        userId: "user_fake",
+        level: "full",
+      }),
+    ).rejects.toThrow("That person is not in this workspace");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("move into a parent the caller cannot edit is rejected", async () => {
+  const t = potionTest();
+  const destination = await insertPage(t, {
+    title: "Locked",
+    generalAccess: "view",
+  });
+  const page = await insertPage(t, { title: "Mine", createdBy: MEMBER });
+  const member = asUser(t, MEMBER);
+
+  await expect(
+    member.mutation(api.documents.move, { id: page, parentId: destination, index: 0 }),
+  ).rejects.toThrow("You don't have access to do that");
+});
+
+test("duplicate of a parent includes the child", async () => {
+  const t = potionTest();
+  const parent = await insertPage(t, { title: "Board", shareToken: "parent-token" });
+  await insertPage(t, {
+    title: "Row",
+    parentId: parent,
+    shareToken: "child-token",
+  });
+  const creator = asUser(t, CREATOR);
+
+  const copyId = await creator.mutation(api.documents.duplicate, { id: parent });
+  const copy = await t.run(async (ctx) => ctx.db.get("documents", copyId));
+  expect(copy?.title).toBe("Copy of Board");
+  expect(copy?.shareToken).toBeUndefined();
+
+  const children = await t.run(async (ctx) =>
+    ctx.db
+      .query("documents")
+      .withIndex("by_org_parent", (q) => q.eq("orgId", ORG).eq("parentId", copyId))
+      .collect(),
+  );
+  expect(children).toHaveLength(1);
+  expect(children[0]?.title).toBe("Row");
+  expect(children[0]?.shareToken).toBeUndefined();
+  expect(children[0]?.parentId).toBe(copyId);
+
+  const childId = children[0]!._id;
+  const grant = await t.run(async (ctx) =>
+    ctx.db
+      .query("access")
+      .withIndex("by_document_user", (q) =>
+        q.eq("documentId", childId).eq("userId", CREATOR),
+      )
+      .unique(),
+  );
+  expect(grant?.level).toBe("full");
+});
+
+test("search does not return another org", async () => {
+  const t = potionTest();
+  await insertPage(t, {
+    orgId: "org_other",
+    title: "Secret plan",
+    plainText: "secret words",
+  });
+  const local = await insertPage(t, {
+    title: "Secret plan",
+    plainText: "secret words",
+  });
+  const member = asUser(t, MEMBER);
+
+  const hits = await member.query(api.documents.search, { query: "Secret" });
+  expect(hits.map((hit) => hit._id)).toEqual([local]);
 });
 
 test("restore rejects a view-only member", async () => {

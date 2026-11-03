@@ -5,10 +5,10 @@ import {
   OrganizationSwitcher,
   useOrganization,
 } from "@clerk/nextjs";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { PanelLeft } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Breadcrumbs } from "@/components/editor/breadcrumbs";
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
@@ -27,12 +27,20 @@ import { cn } from "@/lib/utils";
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const { isLoaded, organization } = useOrganization();
+  const backfillSearchText = useMutation(api.documents.backfillSearchText);
+  const searchBackfillStarted = useRef(false);
   const pathname = usePathname();
   const documentId = pathname.match(/^\/app\/p\/([^/]+)/)?.[1];
   const pages = useQuery(
     api.documents.list,
     organization ? {} : "skip",
   ) as PageDoc[] | undefined;
+  useEffect(() => {
+    if (!organization || searchBackfillStarted.current) return;
+    searchBackfillStarted.current = true;
+    void backfillSearchText();
+  }, [organization, backfillSearchText]);
+
   const pageInWorkspace = Boolean(
     documentId && pages?.some((page) => page._id === documentId),
   );

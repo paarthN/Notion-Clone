@@ -120,8 +120,8 @@ export const mentions = query({
     const { orgId, userId } = await requireOrg(ctx);
     const [rows, reads] = await Promise.all([
       ctx.db
-        .query("comments")
-        .withIndex("by_org", (q) => q.eq("orgId", orgId))
+        .query("commentMentions")
+        .withIndex("by_org_user", (q) => q.eq("orgId", orgId).eq("userId", userId))
         .collect(),
       ctx.db
         .query("mentionReads")
@@ -133,13 +133,10 @@ export const mentions = query({
     const readIds = new Set(reads.map((row) => row.commentId));
 
     const mentioned = rows
-      .filter(
-        (row) =>
-          row.userId !== userId &&
-          row.mentions.includes(userId) &&
-          !readIds.has(row._id),
-      )
-      .sort((a, b) => b.createdAt - a.createdAt || (a._id < b._id ? 1 : -1));
+      .filter((row) => row.authorId !== userId && !readIds.has(row.commentId))
+      .sort(
+        (a, b) => b.createdAt - a.createdAt || (a.commentId < b.commentId ? 1 : -1),
+      );
 
     const found: {
       _id: Id<"comments">;
@@ -155,9 +152,9 @@ export const mentions = query({
         const access = await requireAccess(ctx, row.documentId, "view");
         if (access.doc.orgId !== orgId || access.doc.isArchived) continue;
         found.push({
-          _id: row._id,
+          _id: row.commentId,
           documentId: row.documentId,
-          userId: row.userId,
+          userId: row.authorId,
           title: access.doc.title,
           createdAt: row.createdAt,
         });
@@ -210,6 +207,7 @@ export const create = mutation({
     const { orgId, userId } = await requireAccess(ctx, args.documentId, "edit");
     const now = Date.now();
     const threadId = crypto.randomUUID();
+    const mentions = cleanMentions(args.mentions);
     const commentId = await ctx.db.insert("comments", {
       orgId,
       documentId: args.documentId,
@@ -220,8 +218,16 @@ export const create = mutation({
       threadId,
       resolved: false,
       anchor: cleanAnchor(args.anchor),
-      mentions: cleanMentions(args.mentions),
+      mentions,
       reactions: [],
+    });
+    await writeMentions(ctx, {
+      _id: commentId,
+      orgId,
+      documentId: args.documentId,
+      userId,
+      createdAt: now,
+      mentions,
     });
     return { commentId, threadId };
   },
@@ -242,6 +248,7 @@ export const reply = mutation({
       throw new Error("Thread not found");
     }
     const now = Date.now();
+    const mentions = cleanMentions(args.mentions);
     const commentId = await ctx.db.insert("comments", {
       orgId,
       documentId: args.documentId,
@@ -253,8 +260,16 @@ export const reply = mutation({
       replyTo: root._id,
       resolved: false,
       anchor: root.anchor,
-      mentions: cleanMentions(args.mentions),
+      mentions,
       reactions: [],
+    });
+    await writeMentions(ctx, {
+      _id: commentId,
+      orgId,
+      documentId: args.documentId,
+      userId,
+      createdAt: now,
+      mentions,
     });
     return { commentId, threadId: root.threadId };
   },
@@ -269,11 +284,13 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { comment } = await loadOwn(ctx, args.documentId, args.commentId);
+    const mentions = cleanMentions(args.mentions);
     await ctx.db.patch("comments", comment._id, {
       body: cleanBody(args.body),
-      mentions: cleanMentions(args.mentions),
+      mentions,
       updatedAt: Date.now(),
     });
+    await writeMentions(ctx, { ...comment, mentions });
   },
 });
 
@@ -285,13 +302,13 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const { orgId, comment } = await loadOwn(ctx, args.documentId, args.commentId);
     if (comment.replyTo !== undefined) {
-      await ctx.db.delete("comments", comment._id);
+      await deleteCommentRecord(ctx, comment._id);
       return;
     }
     const rows = await documentComments(ctx, orgId, args.documentId);
     for (const row of rows) {
       if (row.threadId === comment.threadId) {
-        await ctx.db.delete("comments", row._id);
+        await deleteCommentRecord(ctx, row._id);
       }
     }
   },
@@ -360,3 +377,63 @@ export const toggleReaction = mutation({
     await ctx.db.patch("comments", comment._id, { reactions });
   },
 });
+
+export async function deleteCommentsForDocument(
+  ctx: MutationCtx,
+  orgId: string,
+  documentId: Id<"documents">,
+) {
+  const rows = await documentComments(ctx, orgId, documentId);
+  for (const row of rows) {
+    await deleteCommentRecord(ctx, row._id);
+  }
+}
+
+async function writeMentions(
+  ctx: MutationCtx,
+  comment: {
+    _id: Id<"comments">;
+    orgId: string;
+    documentId: Id<"documents">;
+    userId: string;
+    createdAt: number;
+    mentions: string[];
+  },
+) {
+  const existing = await ctx.db
+    .query("commentMentions")
+    .withIndex("by_comment", (q) => q.eq("commentId", comment._id))
+    .collect();
+  for (const row of existing) {
+    await ctx.db.delete("commentMentions", row._id);
+  }
+  for (const mentioned of comment.mentions) {
+    if (mentioned === comment.userId) continue;
+    await ctx.db.insert("commentMentions", {
+      orgId: comment.orgId,
+      userId: mentioned,
+      commentId: comment._id,
+      documentId: comment.documentId,
+      authorId: comment.userId,
+      createdAt: comment.createdAt,
+    });
+  }
+}
+
+async function deleteCommentRecord(ctx: MutationCtx, commentId: Id<"comments">) {
+  const mentions = await ctx.db
+    .query("commentMentions")
+    .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+    .collect();
+  for (const row of mentions) {
+    await ctx.db.delete("commentMentions", row._id);
+  }
+  const reads = await ctx.db
+    .query("mentionReads")
+    .withIndex("by_comment", (q) => q.eq("commentId", commentId))
+    .collect();
+  for (const row of reads) {
+    await ctx.db.delete("mentionReads", row._id);
+  }
+  await ctx.db.delete("comments", commentId);
+}

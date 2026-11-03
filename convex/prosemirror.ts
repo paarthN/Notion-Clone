@@ -9,6 +9,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { requireAccess } from "./lib/access";
 import { pagePmSchema } from "./lib/pmSchema";
 import { plainTextFromSnapshot } from "./lib/plaintext";
+import { documentSearchText } from "./lib/searchText";
 
 export const prosemirrorSync = new ProsemirrorSync(
   components.prosemirrorSync as unknown as ConstructorParameters<
@@ -33,9 +34,11 @@ export const {
     const documentId = id as Id<"documents">;
     const doc = await ctx.db.get("documents", documentId);
     if (doc) {
+      const plainText = plainTextFromSnapshot(snapshot);
       await ctx.db.patch("documents", doc._id, {
         updatedAt: Date.now(),
-        plainText: plainTextFromSnapshot(snapshot),
+        plainText,
+        searchText: documentSearchText(doc.title, plainText),
       });
     }
     await keepLatestSnapshots(ctx, documentId);
@@ -174,9 +177,12 @@ export const restore = mutation({
       { clientId: "restore" },
     );
 
+    const plainText = plainTextFromSnapshot(JSON.stringify(doc.toJSON()));
+    const page = await ctx.db.get("documents", args.id);
     await ctx.db.patch("documents", args.id, {
       updatedAt: Date.now(),
-      plainText: plainTextFromSnapshot(JSON.stringify(doc.toJSON())),
+      plainText,
+      ...(page ? { searchText: documentSearchText(page.title, plainText) } : {}),
     });
   },
 });
