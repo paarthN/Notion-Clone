@@ -10,7 +10,7 @@ import { api } from "../../../convex/_generated/api";
 
 type Starter = "blank" | "note" | "todo";
 
-const buttonClass =
+export const startButtonClass =
   "inline-flex h-8 cursor-pointer items-center rounded-md border border-[#e6e5e3] bg-white px-3 text-[14px] font-[450] text-[#2c2c2b] shadow-[0_1px_1px_rgba(15,15,15,0.04)] hover:bg-[#f7f6f5] active:bg-[#efeeec] disabled:cursor-default disabled:opacity-40 dark:border-[#383836] dark:bg-[#202020] dark:text-[#f0efed] dark:hover:bg-[#2a2a2a] dark:active:bg-[#333331]";
 
 export function StartActions() {
@@ -57,7 +57,7 @@ export function StartActions() {
         onClick={() => void start(starter)}
         disabled={creating !== null}
         aria-busy={busy}
-        className={cn(buttonClass, busy && "disabled:opacity-100")}
+        className={cn(startButtonClass, busy && "disabled:opacity-100")}
       >
         {label(starter, text)}
       </button>

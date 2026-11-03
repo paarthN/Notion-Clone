@@ -32,6 +32,10 @@ export default defineSchema({
     ),
     coverStorageId: v.optional(v.id("_storage")),
     searchText: v.optional(v.string()),
+    courseCode: v.optional(v.string()),
+    section: v.optional(
+      v.union(v.literal("notes"), v.literal("tasks"), v.literal("exams")),
+    ),
   })
     .index("by_org", ["orgId"])
     .index("by_org_parent", ["orgId", "parentId"])
@@ -124,6 +128,11 @@ export default defineSchema({
   })
     .index("by_org_user_comment", ["orgId", "userId", "commentId"])
     .index("by_comment", ["commentId"]),
+
+  workspaceSettings: defineTable({
+    orgId: v.string(),
+    termStartsOn: v.number(),
+  }).index("by_org", ["orgId"]),
 
   commentMentions: defineTable({
     orgId: v.string(),

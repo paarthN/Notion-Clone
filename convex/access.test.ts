@@ -143,6 +143,21 @@ test("a document in another organization is not found", async () => {
   );
 });
 
+test("a workspace admin from the compact session claim can trash another member's page", async () => {
+  const t = potionTest();
+  const id = await insertPage(t, { title: "Other person's page", createdBy: CREATOR });
+  const admin = t.withIdentity({
+    subject: "user_owner",
+    name: "Owner",
+    o: { id: ORG, rol: "admin", slg: "acme" },
+  });
+
+  await admin.mutation(api.documents.archive, { id });
+
+  const page = await t.run(async (ctx) => ctx.db.get("documents", id));
+  expect(page?.isArchived).toBe(true);
+});
+
 test("archive requires full access", async () => {
   const t = potionTest();
   const id = await insertPage(t, { title: "To trash" });

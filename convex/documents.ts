@@ -192,6 +192,141 @@ export const create = mutation({
   },
 });
 
+export const createCourse = mutation({
+  args: {
+    title: v.string(),
+    courseCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { orgId, userId } = await requireOrg(ctx);
+    const title = args.title.trim();
+    const courseCode = args.courseCode.trim();
+    if (!title) {
+      throw new Error("Course name is required");
+    }
+    if (!courseCode) {
+      throw new Error("Course code is required");
+    }
+
+    const roots = await ctx.db
+      .query("documents")
+      .withIndex("by_org_parent", (q) => q.eq("orgId", orgId).eq("parentId", null))
+      .collect();
+    const position = roots.reduce((max, doc) => Math.max(max, doc.position), -1) + 1;
+    const updatedAt = Date.now();
+
+    const courseId = await ctx.db.insert("documents", {
+      orgId,
+      parentId: null,
+      title,
+      icon: null,
+      coverUrl: null,
+      isArchived: false,
+      position,
+      createdBy: userId,
+      updatedAt,
+      kind: "folder",
+      plainText: "",
+      searchText: documentSearchText(title, ""),
+      courseCode,
+    });
+    await ctx.db.insert("access", {
+      orgId,
+      documentId: courseId,
+      userId,
+      level: "full",
+      trusted: true,
+    });
+
+    const course = await ctx.db.get("documents", courseId);
+    if (!course || course.orgId !== orgId) {
+      throw new Error("Course not found");
+    }
+
+    const children: Array<{
+      title: string;
+      kind: "page" | "database";
+      section: "notes" | "tasks" | "exams";
+      view?: "board";
+    }> = [
+      { title: "Notes", kind: "page", section: "notes" },
+      { title: "Tasks", kind: "database", section: "tasks", view: "board" },
+      { title: "Exams", kind: "database", section: "exams", view: "board" },
+    ];
+
+    for (const [index, child] of children.entries()) {
+      const id = await ctx.db.insert("documents", {
+        orgId,
+        parentId: courseId,
+        title: child.title,
+        icon: null,
+        coverUrl: null,
+        isArchived: false,
+        position: index,
+        createdBy: userId,
+        updatedAt,
+        kind: child.kind,
+        plainText: "",
+        searchText: documentSearchText(child.title, ""),
+        section: child.section,
+        ...(course.generalAccess ? { generalAccess: course.generalAccess } : {}),
+        ...(course.accessBeforePrivate
+          ? { accessBeforePrivate: course.accessBeforePrivate }
+          : {}),
+        ...(child.kind === "database" && child.view ? { view: child.view } : {}),
+      });
+      await ctx.db.insert("access", {
+        orgId,
+        documentId: id,
+        userId,
+        level: "full",
+        trusted: true,
+      });
+      if (child.kind === "page") {
+        await prosemirrorSync.create(ctx, id, EMPTY_DOC);
+      }
+    }
+
+    return courseId;
+  },
+});
+
+export const termStart = query({
+  args: {},
+  handler: async (ctx) => {
+    const { orgId } = await requireOrg(ctx);
+    const row = await ctx.db
+      .query("workspaceSettings")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .unique();
+    return row?.termStartsOn ?? null;
+  },
+});
+
+export const setTermStart = mutation({
+  args: { termStartsOn: v.number() },
+  handler: async (ctx, args) => {
+    const { orgId } = await requireOrg(ctx);
+    if (!Number.isFinite(args.termStartsOn)) {
+      throw new Error("Invalid date");
+    }
+    const existing = await ctx.db
+      .query("workspaceSettings")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .unique();
+    if (existing) {
+      await ctx.db.patch("workspaceSettings", existing._id, {
+        termStartsOn: args.termStartsOn,
+      });
+      return;
+    }
+    await ctx.db.insert("workspaceSettings", {
+      orgId,
+      termStartsOn: args.termStartsOn,
+    });
+  },
+});
+
 export const rename = mutation({
   args: { id: v.id("documents"), title: v.string() },
   handler: async (ctx, args) => {

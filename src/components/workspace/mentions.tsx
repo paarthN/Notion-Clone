@@ -15,9 +15,11 @@ export function Mentions({ pagesLoaded }: { pagesLoaded: boolean }) {
   if (!pagesLoaded || mentions === undefined || mentions.length === 0) return null;
 
   return (
-    <div className="mb-6">
-      <div className="mb-1 flex h-8 items-center">
-        <h2 className="text-[12px] font-medium text-[#a19e99] dark:text-[#7d7a75]">Mentions</h2>
+    <div className="mb-10">
+      <div className="mb-1 flex min-h-9 items-center px-2">
+        <h2 className="text-[16px] font-semibold leading-6 text-[#2c2c2b] dark:text-[#f0efed]">
+          Mentions
+        </h2>
       </div>
       <ul>
         {mentions.map((mention) => {
@@ -33,9 +35,9 @@ export function Mentions({ pagesLoaded }: { pagesLoaded: boolean }) {
                     router.push(`/app/p/${mention.documentId}`);
                   });
                 }}
-                className="flex h-8 w-full items-center gap-2 rounded-[6px] px-2 text-left hover:bg-accent"
+                className="flex min-h-10 w-full items-center gap-2.5 rounded-[6px] px-2 text-left hover:bg-accent"
               >
-                <span className="min-w-0 flex-1 truncate text-[14px] text-foreground">
+                <span className="min-w-0 flex-1 truncate text-[16px] leading-6 text-foreground">
                   {name} mentioned you in {title}
                 </span>
               </button>

@@ -321,7 +321,14 @@ export function DocumentItem({
             className="h-6 px-1 py-0 text-sm"
           />
         ) : (
-          <span className="flex-1 truncate">{document.title || "Untitled"}</span>
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <span className="truncate">{document.title || "Untitled"}</span>
+            {document.courseCode?.trim() ? (
+              <span className="shrink-0 text-[12px] text-muted-foreground">
+                {document.courseCode.trim()}
+              </span>
+            ) : null}
+          </span>
         )}
 
         {!isRenaming ? (

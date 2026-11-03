@@ -30,6 +30,8 @@ export type PageDoc = {
   personId?: string;
   view?: DatabaseViewMode;
   statusFilter?: RowStatus;
+  courseCode?: string;
+  section?: "notes" | "tasks" | "exams";
 };
 
 export type PageNode = PageDoc & { children: PageNode[] };

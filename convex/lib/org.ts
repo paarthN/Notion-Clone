@@ -57,7 +57,8 @@ function readRole(identity: UserIdentity): "admin" | "member" {
   const claims = identity as UserIdentity & {
     org_role?: unknown;
     orgRole?: unknown;
+    o?: { rol?: unknown };
   };
-  const role = claims.org_role ?? claims.orgRole;
-  return role === "org:admin" ? "admin" : "member";
+  const role = claims.org_role ?? claims.orgRole ?? claims.o?.rol;
+  return role === "org:admin" || role === "admin" ? "admin" : "member";
 }
