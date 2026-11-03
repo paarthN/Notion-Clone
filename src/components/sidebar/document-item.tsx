@@ -39,6 +39,9 @@ export function DocumentItem({
   onNavigate,
   dragId,
   drop,
+  renameId,
+  onRenameHandled,
+  onRequestRename,
   onRowDragStart,
   onRowDragEnd,
   onRowDragOver,
@@ -50,6 +53,9 @@ export function DocumentItem({
   onNavigate?: () => void;
   dragId: string | null;
   drop: DropTarget | null;
+  renameId: string | null;
+  onRenameHandled: () => void;
+  onRequestRename: (id: string) => void;
   onRowDragStart: (id: string) => void;
   onRowDragEnd: () => void;
   onRowDragOver: (target: DropTarget | null) => void;
@@ -63,7 +69,9 @@ export function DocumentItem({
   const favoriteIds = useQuery(api.documents.favorites) as string[] | undefined;
   const isFavorite = favoriteIds?.includes(document._id) ?? false;
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(
+    () => isFolder && pages.some((page) => page.parentId === document._id),
+  );
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState(document.title);
 
@@ -73,6 +81,14 @@ export function DocumentItem({
   const duplicate = useMutation(api.documents.duplicate);
   const toggleFavorite = useMutation(api.documents.toggleFavorite);
   const skipClick = useRef(false);
+
+  useEffect(() => {
+    if (renameId !== document._id) return;
+    setDraftTitle(document.title);
+    setIsRenaming(true);
+    setExpanded(true);
+    onRenameHandled();
+  }, [renameId, document._id, document.title, onRenameHandled]);
 
   useEffect(() => {
     if (isDatabase || drop?.id !== document._id || drop.placement !== "inside" || expanded) {
@@ -95,7 +111,8 @@ export function DocumentItem({
     }
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = rect.height === 0 ? 0.5 : (event.clientY - rect.top) / rect.height;
-    const placement = ratio < 0.28 ? "before" : ratio > 0.72 ? "after" : "inside";
+    const edge = isFolder ? 0.18 : 0.28;
+    const placement = ratio < edge ? "before" : ratio > 1 - edge ? "after" : "inside";
     const parentId = placement === "inside" ? document._id : document.parentId;
     if (parentId && isPageWithin(pages, dragId, parentId)) {
       onRowDragOver(null);
@@ -124,7 +141,9 @@ export function DocumentItem({
           kind,
         });
         setExpanded(true);
-        if (kind !== "folder") {
+        if (kind === "folder") {
+          onRequestRename(childId);
+        } else {
           onNavigate?.();
           router.push(`/app/p/${childId}`);
         }
@@ -138,7 +157,7 @@ export function DocumentItem({
         );
       }
     },
-    [create, document._id, onNavigate, router],
+    [create, document._id, onNavigate, onRequestRename, router],
   );
 
   const startRename = useCallback(() => {
@@ -229,6 +248,9 @@ export function DocumentItem({
         onDrop={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (drop?.id === document._id && drop.placement === "inside") {
+            setExpanded(true);
+          }
           onRowDrop(document._id);
         }}
         onDragEnd={onRowDragEnd}
@@ -351,17 +373,48 @@ export function DocumentItem({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Add a page inside"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onCreateChild("page");
-              }}
-            >
-              <Plus className="size-3.5" />
-            </Button>
+            {isFolder ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="Add inside"
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  }
+                >
+                  <Plus className="size-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-36">
+                  <DropdownMenuItem onClick={() => void onCreateChild("page")}>
+                    <FileText className="size-3.5" />
+                    New page
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void onCreateChild("folder")}>
+                    <Folder className="size-3.5" />
+                    New folder
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void onCreateChild("database")}>
+                    <Table className="size-3.5" />
+                    New database
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Add a page inside"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onCreateChild("page");
+                }}
+              >
+                <Plus className="size-3.5" />
+              </Button>
+            )}
           </div>
         ) : null}
       </div>
@@ -385,6 +438,9 @@ export function DocumentItem({
                 onNavigate={onNavigate}
                 dragId={dragId}
                 drop={drop}
+                renameId={renameId}
+                onRenameHandled={onRenameHandled}
+                onRequestRename={onRequestRename}
                 onRowDragStart={onRowDragStart}
                 onRowDragEnd={onRowDragEnd}
                 onRowDragOver={onRowDragOver}

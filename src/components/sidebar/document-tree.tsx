@@ -33,6 +33,8 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
   const dropRef = useRef<DropTarget | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const onRenameHandled = useCallback(() => setRenameId(null), []);
 
   const onRowDragStart = useCallback((id: string) => {
     dragIdRef.current = id;
@@ -105,7 +107,9 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
     async (kind: "page" | "folder" | "database") => {
       try {
         const id = await create({ parentId: null, title: "Untitled", kind });
-        if (kind !== "folder") {
+        if (kind === "folder") {
+          setRenameId(id);
+        } else {
           onNavigate?.();
           router.push(`/app/p/${id}`);
         }
@@ -137,7 +141,7 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
                 variant="ghost"
                 size="icon-xs"
                 aria-label="New page, folder, or database"
-                className="opacity-0 group-hover/section:opacity-100"
+                className="text-[#6f6c67] dark:text-[#ada9a3]"
               />
             }
           >
@@ -185,6 +189,9 @@ export function DocumentTree({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate={onNavigate}
               dragId={dragId}
               drop={drop}
+              renameId={renameId}
+              onRenameHandled={onRenameHandled}
+              onRequestRename={setRenameId}
               onRowDragStart={onRowDragStart}
               onRowDragEnd={onRowDragEnd}
               onRowDragOver={onRowDragOver}
